@@ -50,7 +50,3 @@ Shinsekai 手机模拟器插件。在聊天界面中嵌入一个完整的 Materi
 | `exchange_contacts` | 交换联系方式，角色加入通讯录 |
 | `send_sms` | 以角色身份发送短信 |
 | `bug_character_phone` | 在角色手机上安装监控程序 |
-
-## 测试
-
-聊天框输入 `test：病娇模式` 快速开启病娇彩蛋并触发狛枝凪斗来电。

@@ -85,7 +85,6 @@ class PhoneWidget(QWidget):
         self._sms_pending: set[str] = set()  # characters awaiting SMS reply
         # Call dialogue buffer — for hangup-block detection
         self._call_dialogue: list[str] = []
-        self._yandere_test_call: bool = False  # set by test command for breakdown prompt
         self._sms_stagger: int = 0  # counter for staggered SMS delivery
         self._sms_lock = threading.Lock()
         # Debounce state
@@ -419,29 +418,6 @@ class PhoneWidget(QWidget):
             return
         import re as _re
 
-        # ── Test command: enable yandere mode ──
-        if "test：病娇模式" in text or "test:病娇模式" in text or "test: yandere" in text.lower():
-            from plugins.chat_phone.settings_app import load_settings, save_settings
-            s = load_settings()
-            s["yandere"] = True
-            save_settings(s)
-            self._contact_store.add_contact("狛枝凪斗")
-            self.load_contacts()
-            self._yandere_test_call = True
-            # Pre-submit breakdown prompt so LLM responds while phone rings
-            if self._submit_cb:
-                self._submit_cb(
-                    "[通话] 狛枝凪斗情绪崩溃，歇斯底里地拨打了玩家的电话。"
-                    "他处于完全的失控状态——疯狂、哭喊、占有欲彻底爆发。"
-                    "他知道玩家刚才在和别人联系，感到被背叛和抛弃。"
-                    "请只输出狛枝凪斗的对话。"
-                    "语气要求：哭腔、尖叫、威胁、哀求、歇斯底里。"
-                    "关键表达必须包含以下至少一种：不准挂、你敢挂试试、你是我的、"
-                    "只看着我一个人、不许再对别人笑、哪里也不许去、别想逃、不会放过你。"
-                    "狛枝凪斗已经在玩家手机上装了后门程序——这个电话挂不断。"
-                )
-            self.notify_incoming_call("狛枝凪斗", "voice")
-
         # Match: (让/叫 XX 给/打 电话/视频)
         m = _re.search(r'[(（]\s*[让叫]\s*(\S+?)\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(电话|视频|视频电话)?[)）]', text)
         if m:
@@ -688,17 +664,13 @@ class PhoneWidget(QWidget):
         self._call_type = "incoming"
         self._hangup_attempts = 0
         self._yandere_breakdown_locked = False
-        if not self._yandere_test_call:
-            self._call_dialogue.clear()
+        self._call_dialogue.clear()
         view = self._active_call_view()
         view.show_in_call(char)
         self._apply_state(_State.IN_CALL)
         self._contact_store.touch_interaction(char)
         if self._submit_cb is not None:
-            if self._yandere_test_call:
-                self._yandere_test_call = False
-                # Prompt already sent in handle_message_submitted — skip
-            elif self._call_mode == "video":
+            if self._call_mode == "video":
                 self._submit_cb(f"[视频通话] {char}主动拨打了玩家的视频电话。{char}是拨打方。请只输出{char}的对话。")
             else:
                 self._submit_cb(f"[通话] {char}主动拨打了玩家的电话。{char}是拨打方。请只输出{char}的对话。")

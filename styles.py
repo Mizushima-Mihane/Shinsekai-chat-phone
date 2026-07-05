@@ -2,8 +2,66 @@
 
 from __future__ import annotations
 
+# ── Theme refresh system ───────────────────────────────────────────────
+_theme_cbs: list = []
+def on_theme_change(cb): _theme_cbs.append(cb)
+def notify_theme_change(theme):
+    for cb in _theme_cbs:
+        try: cb(theme)
+        except Exception: pass
+
+
 # ── Macaron palette ────────────────────────────────────────────────────
-SURFACE = "#FFFAFA"
+def _theme():
+    try:
+        from plugins.chat_phone.settings_app import get_theme
+        return get_theme()
+    except Exception:
+        return "#FFFAFA"
+
+
+def _darken(hex_color: str, factor: float = 0.06) -> str:
+    """Darken a hex colour by *factor* (0-1)."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    r = max(0, int(r * (1 - factor)))
+    g = max(0, int(g * (1 - factor)))
+    b = max(0, int(b * (1 - factor)))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _lighten(hex_color: str, factor: float = 0.08) -> str:
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    r = min(255, int(r + (255 - r) * factor))
+    g = min(255, int(g + (255 - g) * factor))
+    b = min(255, int(b + (255 - b) * factor))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def get_bg() -> str:
+    """Main background — theme colour."""
+    return _theme()
+
+
+def get_surface() -> str:
+    """Card/surface background — slightly lighter than theme."""
+    return _lighten(_theme(), 0.05)
+
+
+def get_content_bg() -> str:
+    """Content area — even lighter."""
+    return _lighten(_theme(), 0.10)
+
+
+def get_accent() -> str:
+    """Accent colour — slightly darker theme for buttons/tabs."""
+    hex_color = _theme().lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    r = max(0, int(r * 0.85))
+    g = max(0, int(g * 0.85))
+    b = max(0, int(b * 0.85))
+    return f"#{r:02x}{g:02x}{b:02x}"
 SURFACE_CONTAINER = "#FFFFFF"
 SURFACE_VARIANT = "#F5F0F0"
 ON_SURFACE = "#3C2A2A"
@@ -17,7 +75,7 @@ TERTIARY = "#C7CEEA"      # pastel lavender
 ERROR = "#FF8A80"
 
 # App accent colours (macaron)
-ACCENT_PHONE = "#34C759"     # green
+ACCENT_PHONE = "#7AE582"     # light green
 ACCENT_MESSAGES = "#B5EAD7"  # mint green
 ACCENT_CONTACTS = "#C7CEEA"  # lavender
 ACCENT_MEMOS = "#FFDAC1"     # peach
@@ -116,7 +174,7 @@ def fab_style(color: str = "#FFB3BA") -> str:
 
 
 def chip_style(checked: bool = False) -> str:
-    bg = "#FFB3BA" if checked else "#F5F0F0"
+    bg = get_accent() if checked else get_surface()
     fg = "white" if checked else "#3C2A2A"
     return (
         f"QPushButton {{"

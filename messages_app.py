@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from plugins.chat_phone.message_store import MessageStore
 from plugins.chat_phone.styles import (
-    AVATAR_COLORS, SURFACE, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT,
+    AVATAR_COLORS, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT, get_surface,
 )
 
 
@@ -26,6 +26,7 @@ class MessagesApp(QWidget):
         self._submit_cb: object = None
         self._sms_sent_cb: object = None
         self._save_cb: object = None
+        self._read_cb: object = None
         self._contacts: list[str] = []
         self._unread: dict[str, int] = {}
         self._previews: dict[str, str] = {}
@@ -41,6 +42,19 @@ class MessagesApp(QWidget):
     def set_submit_callback(self, cb): self._submit_cb = cb
     def set_sms_sent_callback(self, cb): self._sms_sent_cb = cb
     def set_save_callback(self, cb): self._save_cb = cb
+    def set_read_callback(self, cb): self._read_cb = cb
+
+    def _on_call_btn(self):
+        btn = self.sender()
+        if btn:
+            name = btn.property("char_name")
+            if name and isinstance(name, str) and name.strip():
+                try:
+                    from plugins.chat_phone.plugin import _phone_widget
+                    if _phone_widget:
+                        _phone_widget._start_call(name, mode="voice")
+                except Exception:
+                    pass
 
     def refresh(self, contacts, unread, previews):
         self._contacts, self._unread, self._previews = list(contacts), dict(unread), dict(previews)
@@ -61,7 +75,8 @@ class MessagesApp(QWidget):
         self._previews[name] = preview
         if self._save_cb is not None:
             self._save_cb()
-        if self._msg_layout is not None:
+        # Only show bubble if we're currently viewing this character's chat
+        if self._msg_layout is not None and name == self._character:
             self._add_bubble(text, False)
             self._scroll_down()
 
@@ -89,7 +104,7 @@ class MessagesApp(QWidget):
             self._stack.addWidget(hint, 1)
             return
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        c = QWidget(); c.setStyleSheet(f"background: {SURFACE};")
+        c = QWidget(); c.setStyleSheet(f"background: {get_surface()};")
         cl = QVBoxLayout(c); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
         for name in self._contacts:
             row = QWidget(); row.setFixedHeight(64)
@@ -111,7 +126,11 @@ class MessagesApp(QWidget):
         cl.addStretch(); scroll.setWidget(c); self._stack.addWidget(scroll, 1)
 
     def _make_tap(self, name: str):
-        def handler(event): self._store.mark_all_read(name); self._show_chat(name)
+        def handler(event):
+            self._store.mark_all_read(name)
+            if self._read_cb is not None:
+                self._read_cb()
+            self._show_chat(name)
         return handler
 
     # ── Chat view ──
@@ -119,14 +138,16 @@ class MessagesApp(QWidget):
         self._view = "chat"; self._character = name
         self._top_bar["title"].setText(name)
         self._top_bar["back"].show()
-        self._top_bar["action"].setText("\U0001F4DE")
+        self._top_bar["action"].setText("☏")
         self._top_bar["action"].clicked.disconnect()
-        self._top_bar["action"].clicked.connect(lambda: self.on_call.emit(name))
+        self._top_bar["action"].setProperty("char_name", name)
+        self._top_bar["action"].clicked.connect(self._on_call_btn)
         self._clear()
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {SURFACE}; border: none; }}")
-        mc = QWidget(); mc.setStyleSheet(f"background: {SURFACE};")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {get_surface()}; border: none; border-radius: 20px; }}")
+        mc = QWidget(); mc.setStyleSheet(f"background: {get_surface()};")
         self._msg_layout = QVBoxLayout(mc)
         self._msg_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._msg_layout.setContentsMargins(4, 6, 4, 6); self._msg_layout.setSpacing(6)
@@ -137,7 +158,7 @@ class MessagesApp(QWidget):
         self._scroll = scroll; QTimer.singleShot(500, self._scroll_down)
 
         ibar = QWidget()
-        ibar.setStyleSheet(f"background: {SURFACE}; border-top: 1px solid {OUTLINE_VARIANT};")
+        ibar.setStyleSheet(f"background: {get_surface()}; border-top: 1px solid {OUTLINE_VARIANT};")
         ibar.setFixedHeight(46)
         il = QHBoxLayout(ibar); il.setContentsMargins(8, 5, 8, 5); il.setSpacing(6)
         inp = QLineEdit(); inp.setPlaceholderText("发消息...")
@@ -146,7 +167,8 @@ class MessagesApp(QWidget):
         inp.setStyleSheet(f"QLineEdit {{ background: {OUTLINE_VARIANT}; color: {ON_SURFACE}; border: none; border-radius: 17px; padding: 6px 12px; font-size: 13px; }} QLineEdit:focus {{ border: 1px solid #FFB3BA; }}")
         inp.returnPressed.connect(lambda: self._send(inp))
         send = QPushButton("发送"); send.setMinimumWidth(44); send.setMinimumHeight(34)
-        send.setStyleSheet("QPushButton { background: #FFB3BA; color: white; border-radius: 17px; font-size: 12px; font-weight: bold; border: none; } QPushButton:pressed { background: #FF9AA2; }")
+        from plugins.chat_phone.styles import get_accent
+        send.setStyleSheet(f"QPushButton {{ background: {get_accent()}; color: white; border-radius: 17px; font-size: 12px; font-weight: bold; border: none; }}")
         send.clicked.connect(lambda: self._send(inp))
         il.addWidget(inp, 1); il.addWidget(send)
         self._stack.addWidget(scroll, 1); self._stack.addWidget(ibar)
@@ -161,7 +183,10 @@ class MessagesApp(QWidget):
         inp.clear(); self._add_bubble(text, True); self._scroll_down()
         if self._sms_sent_cb is not None: self._sms_sent_cb(self._character)
         if self._submit_cb is not None:
-            self._submit_cb(f"[短信] {self._character}收到:\"{text}\"")
+            self._submit_cb(
+                f"[短信] {self._character}收到了你的短信：\"{text}\"。"
+                f"请调用 send_sms 工具回复，不要输出对话。"
+            )
 
     # ── Bubbles ──
     def _add_bubble(self, text: str, is_user: bool):
@@ -178,9 +203,9 @@ class MessagesApp(QWidget):
         self._msg_layout.addWidget(wrapper)
 
     def _scroll_down(self):
-        if self._scroll: QTimer.singleShot(50, self._do_scroll)
-    def _do_scroll(self):
-        if self._scroll: self._scroll.verticalScrollBar().setValue(self._scroll.verticalScrollBar().maximum())
+        if self._scroll:
+            QTimer.singleShot(30, lambda: self._scroll.verticalScrollBar().setValue(
+                self._scroll.verticalScrollBar().maximum()))
 
     def _clear(self):
         self._msg_layout = None; self._scroll = None
@@ -211,7 +236,7 @@ class MessagesApp(QWidget):
 
 
 def _top_bar() -> dict:
-    w = QWidget(); w.setFixedHeight(48); w.setStyleSheet(f"background: {SURFACE};")
+    w = QWidget(); w.setFixedHeight(48); w.setStyleSheet(f"background: {get_surface()};")
     l = QHBoxLayout(w); l.setContentsMargins(4, 0, 12, 0)
     back = QPushButton("←")
     back.setStyleSheet("QPushButton { background: transparent; color: #FFB3BA; border: none; font-size: 18px; padding: 6px 10px; font-weight: 600; }")

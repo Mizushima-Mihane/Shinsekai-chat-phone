@@ -37,7 +37,7 @@ class ContactStore:
     def get_contacts(self) -> list[str]:
         """Return sorted list of character names that are currently contacts."""
         with self._lock:
-            return sorted(self._contacts.keys())
+            return sorted(k for k in self._contacts.keys() if k and k.strip())
 
     def is_contact(self, name: str) -> bool:
         with self._lock:
@@ -45,6 +45,8 @@ class ContactStore:
 
     def add_contact(self, name: str) -> bool:
         """Add a character as a contact.  Returns True if newly added."""
+        if not name or not name.strip():
+            return False
         with self._lock:
             if name in self._contacts:
                 return False

@@ -6,7 +6,11 @@ import json
 import time
 from pathlib import Path
 
+# (Path imported above)
+
+
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QGridLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QVBoxLayout, QWidget,
@@ -16,11 +20,23 @@ from PySide6.QtWidgets import (
 
 
 from plugins.chat_phone.styles import (
-    AVATAR_COLORS, SURFACE, ON_SURFACE, ON_SURFACE_VARIANT,
+    AVATAR_COLORS, get_surface, ON_SURFACE, ON_SURFACE_VARIANT,
     OUTLINE_VARIANT, chip_style,
 )
 
 _call_log_dir: Path = Path("data/plugins/com.shinsekai.chat_phone")
+
+
+def _call_direct(name):
+    """Bypass signal chain — call phone_widget directly."""
+    if not isinstance(name, str) or not name.strip():
+        return
+    try:
+        from plugins.chat_phone.plugin import _phone_widget
+        if _phone_widget:
+            _phone_widget._start_call(name)
+    except Exception:
+        pass
 
 
 def set_call_log_dir(d: Path) -> None:
@@ -38,27 +54,94 @@ class PhoneApp(QWidget):
     on_back = Signal()
     on_call = Signal(str)
 
-    def __init__(self, contacts: list[str], parent=None):
+    def __init__(self, contacts: list[str], parent=None, title: str = "通话",
+                 show_dial: bool = True):
         super().__init__(parent)
         self._contacts = contacts
         self._tab = "recents"
         self._dial_text = ""
         self._dial_label: QLabel | None = None
+        self._title = title
+        self._show_dial = show_dial
         self._call_log: list[dict] = []
         self._chip_btns: dict[str, QPushButton] = {}
+        self._log_file = "call_log.json"  # default voice log
         self._load_log()
         self._setup_ui()
         self._show_content()
 
+    def _on_call_btn(self):
+        """Read character name from button property, then call."""
+        btn = self.sender()
+        if btn:
+            name = btn.property("char_name")
+            if name and isinstance(name, str) and name.strip():
+                try:
+                    from plugins.chat_phone.plugin import _phone_widget
+                    if _phone_widget:
+                        _phone_widget._start_call(name, mode="voice")
+                except Exception:
+                    pass
+
+    def set_video_mode(self, enabled: bool) -> None:
+        """Switch between voice call and video call mode."""
+        self._title = "视频" if enabled else "通话"
+        self._show_dial = not enabled
+        self._log_file = "video_call_log.json" if enabled else "call_log.json"
+        # Update top bar title
+        if hasattr(self, '_title_label'):
+            self._title_label.setText(self._title)
+        # Rebuild chips bar to properly add/remove dial tab
+        self._rebuild_chips()
+        # Switch off dial tab if it was active
+        if not self._show_dial and self._tab == "dial":
+            self._tab = "recents"
+        # Reload log from appropriate file
+        self._call_log = []
+        self._load_log()
+        self._show_content()
+
+    def _rebuild_chips(self):
+        """Rebuild the tab chips bar to reflect current _show_dial setting."""
+        # Find and clear the chips widget (it's at layout index 1)
+        main_layout = self.layout()
+        if main_layout is None or main_layout.count() < 2:
+            return
+        old_chips = main_layout.itemAt(1).widget()
+        if old_chips is not None:
+            old_chips.deleteLater()
+        # Build new chips
+        chips = QWidget()
+        chips.setStyleSheet(f"background: {get_surface()}; padding: 4px;")
+        cl = QHBoxLayout(chips)
+        cl.setContentsMargins(12, 4, 12, 4)
+        cl.setSpacing(8)
+        self._chip_btns = {}
+        tabs = [("recents", "最近"), ("contacts", "联系人")]
+        if self._show_dial:
+            tabs.append(("dial", "拨号"))
+        for tid, label in tabs:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(tid == self._tab)
+            btn.setStyleSheet(chip_style(tid == self._tab))
+            btn.clicked.connect(self._make_tab(tid))
+            self._chip_btns[tid] = btn
+            cl.addWidget(btn)
+        cl.addStretch()
+        main_layout.insertWidget(1, chips)
+
     def refresh_contacts(self, contacts):
         self._contacts = list(contacts)
-        if self._tab != "dial":
+        if self._tab != "dial" or not hasattr(self, '_show_dial') or not self._show_dial:
             self._show_content()
 
     # ── call log API ──
 
     def log_call(self, name: str, duration: int, call_type: str = "outgoing"):
         """Record a completed call."""
+        if not name or not isinstance(name, str) or not name.strip():
+            return
         entry = {
             "name": name, "duration": duration,
             "timestamp": time.time(), "type": call_type,
@@ -72,9 +155,14 @@ class PhoneApp(QWidget):
         if self._tab == "recents":
             self._show_content()
 
+    def _log_path(self) -> Path:
+        p = _call_log_dir / getattr(self, '_log_file', 'call_log.json')
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
     def _load_log(self):
         try:
-            p = _call_log_path()
+            p = self._log_path()
             if p.is_file():
                 self._call_log = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
@@ -82,7 +170,7 @@ class PhoneApp(QWidget):
 
     def _save_log(self):
         try:
-            p = _call_log_path()
+            p = self._log_path()
             p.write_text(json.dumps(self._call_log, ensure_ascii=False, indent=2),
                          encoding="utf-8")
         except Exception:
@@ -94,14 +182,18 @@ class PhoneApp(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(_top_bar("通话", self.on_back.emit))
+        bar_w, self._title_label = _top_bar_with_title(self._title, self.on_back.emit)
+        layout.addWidget(bar_w)
 
         chips = QWidget()
-        chips.setStyleSheet(f"background: {SURFACE}; padding: 4px;")
+        chips.setStyleSheet(f"background: {get_surface()}; padding: 4px;")
         cl = QHBoxLayout(chips)
         cl.setContentsMargins(12, 4, 12, 4)
         cl.setSpacing(8)
-        for tid, label in [("recents", "最近"), ("contacts", "联系人"), ("dial", "拨号")]:
+        tabs = [("recents", "最近"), ("contacts", "联系人")]
+        if self._show_dial:
+            tabs.append(("dial", "拨号"))
+        for tid, label in tabs:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(tid == self._tab)
@@ -147,7 +239,7 @@ class PhoneApp(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         c = QWidget()
-        c.setStyleSheet(f"background: {SURFACE};")
+        c.setStyleSheet("background: transparent;")
         cl = QVBoxLayout(c)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(0)
@@ -157,7 +249,9 @@ class PhoneApp(QWidget):
             dur = entry.get("duration", 0)
             ts = entry.get("timestamp", 0)
             ttype = entry.get("type", "outgoing")
-            icon = "↗" if ttype == "outgoing" else "↙"
+            icon = "↗" if ttype in ("outgoing", "outgoing_video") else "↙"
+            is_video = "video" in ttype
+            video_indicator = " 📹" if is_video else ""
             ts_str = _fmt_ts(ts)
 
             row = QWidget()
@@ -169,7 +263,7 @@ class PhoneApp(QWidget):
             rl.addWidget(av)
             tv = QVBoxLayout()
             tv.setSpacing(2)
-            nl = QLabel(f"{icon} {name}")
+            nl = QLabel(f"{icon} {name}{video_indicator}")
             nl.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px;")
             dl = QLabel(_fmt_dur(dur) if dur else "未接通")
             dl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px;")
@@ -181,13 +275,19 @@ class PhoneApp(QWidget):
             tl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px;")
             rl.addWidget(tl)
 
-            cb = QPushButton("\U0001F4DE")
+            cb = QPushButton()
             cb.setFixedSize(34, 34)
+            _pix = QPixmap(str(Path(__file__).parent / "assets" / "phone.png"))
+            if not _pix.isNull():
+                cb.setIcon(_pix.scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                cb.setText("☏")
             cb.setStyleSheet(
-                "QPushButton { background: #34C759; color: white; border-radius: 17px;"
+                "QPushButton { background: #7AE582; color: white; border-radius: 17px;"
                 " font-size: 14px; border: none; }"
             )
-            cb.clicked.connect(lambda n=name: self.on_call.emit(n))
+            cb.setProperty("char_name", name)
+            cb.clicked.connect(self._on_call_btn)
             rl.addWidget(cb)
 
             cl.addWidget(row)
@@ -200,6 +300,9 @@ class PhoneApp(QWidget):
 
     def _show_contacts(self):
         _clear(self._stack)
+        from pathlib import Path
+        Path("data/plugins/com.shinsekai.chat_phone/debug_contacts_show.txt").write_text(
+            f"CONTACTS={self._contacts!r}", encoding="utf-8")
         if not self._contacts:
             hint = QLabel("暂无联系人")
             hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -209,7 +312,7 @@ class PhoneApp(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         c = QWidget()
-        c.setStyleSheet(f"background: {SURFACE};")
+        c.setStyleSheet("background: transparent;")
         cl = QVBoxLayout(c)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(0)
@@ -223,13 +326,19 @@ class PhoneApp(QWidget):
             nl = QLabel(name)
             nl.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px;")
             rl.addWidget(nl, 1)
-            cb = QPushButton("\U0001F4DE")
+            cb = QPushButton()
             cb.setFixedSize(38, 38)
+            _pix = QPixmap(str(Path(__file__).parent / "assets" / "phone.png"))
+            if not _pix.isNull():
+                cb.setIcon(_pix.scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                cb.setText("☏")
             cb.setStyleSheet(
-                "QPushButton { background: #34C759; color: white; border-radius: 19px;"
+                "QPushButton { background: #7AE582; color: white; border-radius: 19px;"
                 " font-size: 16px; border: none; }"
             )
-            cb.clicked.connect(lambda n=name: self.on_call.emit(n))
+            cb.setProperty("char_name", name)
+            cb.clicked.connect(self._on_call_btn)
             rl.addWidget(cb)
             cl.addWidget(row)
         cl.addStretch()
@@ -242,7 +351,7 @@ class PhoneApp(QWidget):
         _clear(self._stack)
         self._dial_text = ""
         dw = QWidget()
-        dw.setStyleSheet(f"background: {SURFACE};")
+        dw.setStyleSheet("background: transparent;")
         dl = QVBoxLayout(dw)
         dl.setContentsMargins(0, 0, 0, 0)
         dl.setSpacing(0)
@@ -276,10 +385,16 @@ class PhoneApp(QWidget):
             btn.clicked.connect(self._make_dial(num))
             grid.addWidget(btn, i // 3, i % 3, Qt.AlignmentFlag.AlignCenter)
 
-        call_btn = QPushButton("\U0001F4DE")
+        call_btn = QPushButton()
         call_btn.setFixedSize(60, 60)
+        from pathlib import Path
+        pix = QPixmap(str(Path(__file__).parent / "assets" / "phone.png"))
+        if not pix.isNull():
+            call_btn.setIcon(pix.scaled(30, 30, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            call_btn.setText("☏")
         call_btn.setStyleSheet(
-            "QPushButton { background: #34C759; color: white; border-radius: 30px;"
+            "QPushButton { background: #7AE582; color: white; border-radius: 30px;"
             " font-size: 26px; border: none; }"
         )
         call_btn.clicked.connect(self._on_dial_call)
@@ -316,14 +431,29 @@ class PhoneApp(QWidget):
             self._dial_label.setText(self._dial_text)
 
     def _on_dial_call(self):
-        if self._contacts and self._contacts[0]:
-            self.on_call.emit(self._contacts[0])
+        name = (self._dial_text or "").strip()
+        if name:
+            _call_direct(name)
+            return
+        # Try contacts list first, then contact store
+        if self._contacts and self._contacts[0] and isinstance(self._contacts[0], str):
+            _call_direct(self._contacts[0])
+            return
+        # Fallback: read directly from contact store
+        try:
+            from plugins.chat_phone.contact_store import ContactStore
+            cs = ContactStore()
+            all_c = cs.get_contacts()
+            if all_c:
+                _call_direct(all_c[0])
+        except Exception:
+            pass
 
 
-def _top_bar(title: str, on_back) -> QWidget:
+def _top_bar_with_title(title: str, on_back) -> tuple[QWidget, QLabel]:
     w = QWidget()
     w.setFixedHeight(48)
-    w.setStyleSheet(f"background: {SURFACE};")
+    w.setStyleSheet("background: transparent;")
     l = QHBoxLayout(w)
     l.setContentsMargins(4, 0, 12, 0)
     b = QPushButton("←")
@@ -336,6 +466,11 @@ def _top_bar(title: str, on_back) -> QWidget:
     t.setStyleSheet(f"color: {ON_SURFACE}; font-size: 17px; font-weight: 500;")
     l.addWidget(b)
     l.addWidget(t, 1)
+    return w, t
+
+
+def _top_bar(title: str, on_back) -> QWidget:
+    w, _ = _top_bar_with_title(title, on_back)
     return w
 
 

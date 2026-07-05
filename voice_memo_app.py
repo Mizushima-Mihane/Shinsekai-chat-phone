@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 from plugins.chat_phone.styles import (
-    SURFACE, ON_SURFACE, ON_SURFACE_VARIANT,
+    get_surface, ON_SURFACE, ON_SURFACE_VARIANT,
 )
 
 AUDIO_CACHE = Path("cache/audio")
@@ -64,7 +64,7 @@ class VoiceMemosApp(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         c = QWidget()
-        c.setStyleSheet(f"background: {SURFACE};")
+        c.setStyleSheet("background: transparent;")
         cl = QVBoxLayout(c)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(0)
@@ -96,7 +96,7 @@ class VoiceMemosApp(QWidget):
 
         # Record FAB
         fw = QWidget()
-        fw.setStyleSheet(f"background: {SURFACE};")
+        fw.setStyleSheet("background: transparent;")
         fw.setFixedHeight(64)
         fl = QHBoxLayout(fw)
         fl.setContentsMargins(0, 0, 0, 0)
@@ -266,7 +266,7 @@ class VoiceMemosApp(QWidget):
 def _top_bar(title: str, on_back) -> QWidget:
     w = QWidget()
     w.setFixedHeight(48)
-    w.setStyleSheet(f"background: {SURFACE};")
+    w.setStyleSheet("background: transparent;")
     l = QHBoxLayout(w)
     l.setContentsMargins(4, 0, 12, 0)
     b = QPushButton("←")

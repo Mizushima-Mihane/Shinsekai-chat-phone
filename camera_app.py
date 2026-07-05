@@ -10,7 +10,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
-from plugins.chat_phone.styles import SURFACE, ON_SURFACE_VARIANT
+from plugins.chat_phone.styles import get_surface, ON_SURFACE_VARIANT
 
 
 class CameraApp(QWidget):
@@ -31,7 +31,7 @@ class CameraApp(QWidget):
         # top bar
         tb = QWidget()
         tb.setFixedHeight(48)
-        tb.setStyleSheet(f"background: {SURFACE};")
+        tb.setStyleSheet(f"background: {get_surface()};")
         tl = QHBoxLayout(tb)
         tl.setContentsMargins(4, 0, 12, 0)
         b = QPushButton("←")
@@ -50,14 +50,14 @@ class CameraApp(QWidget):
         self._preview = QLabel("📷\n点击拍照")
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview.setStyleSheet(
-            f"color: {ON_SURFACE_VARIANT}; font-size: 14px; background: {SURFACE};"
+            f"color: {ON_SURFACE_VARIANT}; font-size: 14px; background: {get_surface()};"
         )
         layout.addWidget(self._preview, 1)
 
         # shutter
         fw = QWidget()
         fw.setFixedHeight(80)
-        fw.setStyleSheet(f"background: {SURFACE};")
+        fw.setStyleSheet(f"background: {get_surface()};")
         fl = QHBoxLayout(fw)
         fl.setContentsMargins(0, 0, 0, 0)
         cap = QPushButton()

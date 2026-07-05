@@ -5,7 +5,9 @@ from __future__ import annotations
 import enum
 import json
 import logging
+import random
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -20,10 +22,13 @@ from plugins.chat_phone.browser_app import BrowserApp
 from plugins.chat_phone.call_view import CallView
 from plugins.chat_phone.contact_store import ContactStore
 from plugins.chat_phone.home_screen import HomeScreen
+from plugins.chat_phone.video_call_view import VideoCallView
 from plugins.chat_phone.messages_app import MessagesApp
 from plugins.chat_phone.message_store import MessageStore
+from plugins.chat_phone.music_app import MusicApp
+from plugins.chat_phone.settings_app import SettingsApp
 from plugins.chat_phone.phone_app import PhoneApp
-from plugins.chat_phone.styles import PHONE_QSS
+from plugins.chat_phone.styles import PHONE_QSS, _darken
 from plugins.chat_phone.voice_memo_app import VoiceMemosApp
 
 _logger = logging.getLogger("chat_phone.widget")
@@ -62,6 +67,7 @@ class _State(enum.Enum):
 class PhoneWidget(QWidget):
     contact_list_changed = Signal()
     new_proactive_message = Signal(str, str)
+    _sms_deliver_signal = Signal(str, str)
 
     def __init__(self, submit_cb: object, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -72,9 +78,19 @@ class PhoneWidget(QWidget):
         self._call_char = ""
         self._call_start: float = 0
         self._call_type = ""
+        self._call_mode: str = "voice"  # "voice" or "video"
+        self._call_mode_preset: str = "voice"  # preset from home screen app
         self._hangup_attempts: int = 0
         # SMS tracking: only route replies that follow an SMS send
         self._sms_pending: set[str] = set()  # characters awaiting SMS reply
+        # Call dialogue buffer — for hangup-block detection
+        self._call_dialogue: list[str] = []
+        self._yandere_test_call: bool = False  # set by test command for breakdown prompt
+        self._sms_stagger: int = 0  # counter for staggered SMS delivery
+        self._sms_lock = threading.Lock()
+        # Debounce state
+        self._last_badge_count: int = -1
+        self._refresh_queued: bool = False
 
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -87,7 +103,7 @@ class PhoneWidget(QWidget):
         # ── keep-on-top ──
         self._raise_timer = QTimer(self)
         self._raise_timer.timeout.connect(self._keep_on_top)
-        self._raise_timer.setInterval(100)
+        self._raise_timer.setInterval(500)
 
         # ── data ──
         self._data_dir = _data_dir()
@@ -127,27 +143,24 @@ class PhoneWidget(QWidget):
         self._frame = QWidget(self)
         self._frame.setObjectName("PhoneFrame")
         self._frame.setFixedSize(PHONE_W, PHONE_H)
+        from plugins.chat_phone.settings_app import get_theme
+        theme = get_theme()
+        self._theme = _darken(theme, 0.06)
         self._frame.setStyleSheet(
-            "#PhoneFrame {"
-            "  background-color: #FFFAFA;"
-            "  border: 2px solid #E8DCDC;"
-            "  border-radius: 28px;"
-            "}"
+            f"#PhoneFrame {{ background-color: {self._theme}; border: 1px solid #D8CDCD; border-radius: 28px; }}"
         )
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        from PySide6.QtGui import QColor
+        shadow = QGraphicsDropShadowEffect(self._frame)
+        shadow.setBlurRadius(24); shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        self._frame.setGraphicsEffect(shadow)
+        # Round all content via mask
+        from PySide6.QtGui import QRegion, QPainterPath
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, PHONE_W, PHONE_H, 28, 28)
+        self._frame.setMask(QRegion(path.toFillPolygon().toPolygon()))
         self._frame.hide()
-        # Clip frame to rounded corners via bitmap mask
-        from PySide6.QtGui import QBitmap, QPainter, QBrush, QColor
-        from PySide6.QtCore import Qt as QtCore
-        mask_bm = QBitmap(PHONE_W, PHONE_H)
-        mask_bm.fill(QtCore.GlobalColor.color0)
-        mp = QPainter(mask_bm)
-        mp.setBrush(QBrush(QtCore.GlobalColor.color1))
-        mp.setPen(QtCore.PenStyle.NoPen)
-        mp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        from PySide6.QtCore import QRectF
-        mp.drawRoundedRect(QRectF(0, 0, PHONE_W, PHONE_H), 28, 28)
-        mp.end()
-        self._frame.setMask(mask_bm)
 
         frame_layout = QVBoxLayout(self._frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
@@ -161,6 +174,7 @@ class PhoneWidget(QWidget):
         self._messages_app.set_submit_callback(self._submit_cb)
         self._messages_app.set_sms_sent_callback(self._on_sms_sent)
         self._messages_app.set_save_callback(self._save_messages)
+        self._messages_app.set_read_callback(self._update_badge)
         self._messages_app.on_back.connect(self._go_home)
         self._messages_app.on_call.connect(self._start_call)
 
@@ -174,19 +188,62 @@ class PhoneWidget(QWidget):
 
 
         self._browser_app = BrowserApp(self._frame)
-        self._browser_app.set_submit_callback(self._submit_cb)
         self._browser_app.on_back.connect(self._go_home)
 
-        self._call_view = CallView(self._frame)
+        self._music_app = MusicApp(self._frame)
+        self._music_app.on_back.connect(self._go_home)
+        self._music_app.set_submit_callback(self._submit_cb)
+        self._music_app.set_contact_store(self._contact_store)
+
+        self._settings_app = SettingsApp(self._frame)
+        self._settings_app.on_back.connect(self._go_home)
+
+        # Placeholder apps
+        from PySide6.QtWidgets import QLabel as _QLabel
+        self._location_app = _QLabel("定位功能开发中...", self._frame)
+        self._location_app.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._location_app.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+        self._video_placeholder = _QLabel("视频功能开发中...", self._frame)
+        self._video_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._video_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+        self._group_placeholder = _QLabel("群聊功能开发中...", self._frame)
+        self._group_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._group_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+        self._moments_placeholder = _QLabel("朋友圈功能开发中...", self._frame)
+        self._moments_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._moments_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+
+        # Rounded corner mask for call views (matches phone frame 28px radius)
+        call_mask_path = QPainterPath()
+        call_mask_path.addRoundedRect(0, 0, PHONE_W, PHONE_H, 28, 28)
+        call_mask = QRegion(call_mask_path.toFillPolygon().toPolygon())
+
+        # Call views — direct children of PhoneWidget (NOT inside _frame)
+        # so they stay visible when _frame is hidden during calls.
+        self._call_view = CallView(self)
+        self._call_view.setGeometry(0, 0, PHONE_W, PHONE_H)
+        self._call_view.setMask(call_mask)
+        self._call_view.hide()
         self._call_view.on_accept.connect(self._call_accept)
         self._call_view.on_decline.connect(self._call_decline)
         self._call_view.on_hangup.connect(self._call_hangup)
 
-        # stack
+        self._video_call_view = VideoCallView(self)
+        self._video_call_view.setGeometry(0, 0, PHONE_W, PHONE_H)
+        self._video_call_view.setMask(call_mask)
+        self._video_call_view.hide()
+        self._video_call_view.on_accept.connect(self._call_accept)
+        self._video_call_view.on_decline.connect(self._call_decline)
+        self._video_call_view.on_hangup.connect(self._call_hangup)
+
+        # stack — app widgets inside phone frame
         for w in [self._home, self._messages_app, self._phone_app,
-                   self._memos_app, self._browser_app, self._call_view]:
+                   self._memos_app, self._browser_app, self._music_app,
+                   self._settings_app, self._location_app, self._video_placeholder,
+                   self._group_placeholder, self._moments_placeholder]:
             frame_layout.addWidget(w)
 
+        self._sms_deliver_signal.connect(self._deliver_sms)
         self.new_proactive_message.connect(self._on_proactive_message)
 
         # ── load saved messages ──
@@ -249,27 +306,56 @@ class PhoneWidget(QWidget):
         self._phone_app.refresh_contacts(names)
 
     def add_contact(self, name: str) -> bool:
+        if not name or not name.strip():
+            return False
         added = self._contact_store.add_contact(name)
         if added:
             self.load_contacts()
         return added
 
+    def _is_in_chat_with(self, character: str) -> bool:
+        """Check if we're currently viewing the Messages app chat with *character*."""
+        return (
+            self._state != _State.COLLAPSED
+            and self._current_app == "messages"
+            and self._messages_app._view == "chat"
+            and self._messages_app._character == character
+        )
+
     def notify_new_message(self, character: str, text: str):
         self._message_store.add_message(character, text, is_user=False)
         self._messages_app.add_received_message(character, text)
         self._save_messages()
+        # If already chatting with this character, mark read & skip shake
+        if self._is_in_chat_with(character):
+            self._message_store.mark_all_read(character)
         self._update_badge()
         self._refresh_all()
-        self._shake()
+        from plugins.chat_phone.settings_app import is_dnd
+        if not self._is_in_chat_with(character) and not is_dnd():
+            self._shake()
 
-    def notify_incoming_call(self, character: str):
-        # (self._data_dir / "debug_call_flow.txt").write_text(f"INCOMING: {character}", encoding="utf-8")
+    def notify_incoming_call(self, character: str, call_type: str = "voice"):
         if self._state == _State.IN_CALL:
             return
+        # DND: log as missed, don't ring
+        from plugins.chat_phone.settings_app import is_dnd
+        if is_dnd():
+            label = "未接视频来电(DND)" if call_type == "video" else "未接来电(DND)"
+            self._message_store.add_message(character, label, is_user=False, msg_type="call_missed")
+            self._phone_app.log_call(character, 0, "missed_dnd")
+            self._update_badge()
+            return
         self._previous_state = self._state
-        self._call_view.show_incoming(character)
+        self._call_mode = call_type
+        view = self._active_call_view()
+        view.show_incoming(character)
         self._apply_state(_State.INCOMING_CALL)
-        self._shake()  # shake to notify
+        self._shake_loop()
+
+    def _on_incoming_call(self, character: str, call_type: str = "voice"):
+        """Slot for proactive monitor's incoming_call signal."""
+        self.notify_incoming_call(character, call_type)
 
     # ==================================================================
     # LLM capture — primary: message_added hook (JSON); fallback: HTML
@@ -279,10 +365,11 @@ class PhoneWidget(QWidget):
         """Mark that we're waiting for an SMS reply from this character."""
         self._sms_pending.add(character)
         self._sms_target = character
+        self._sms_stagger = 0  # reset stagger for new conversation
         self._save_messages()
 
-    def route_llm_reply(self, char_name: str, speech: str):
-        """SMS reply from PHONE-tagged LLM output — always stored."""
+    def route_llm_reply(self, char_name: str, speech: str, stagger_index: int = 0):
+        """Store SMS reply — works even during calls (thread-safe)."""
         char_name = (char_name or "").strip()
         speech = (speech or "").strip()
         if not char_name or not speech:
@@ -291,8 +378,28 @@ class PhoneWidget(QWidget):
             self._contact_store.add_contact(char_name)
         self._contact_store.touch_interaction(char_name)
         (self._data_dir / "debug_route_in.txt").write_text(f"ROUTE: {char_name}={speech[:50]}", encoding="utf-8")
+        # Auto-increment stagger for tool-based calls (default stagger_index=0)
+        if stagger_index == 0:
+            with self._sms_lock:
+                stagger_index = self._sms_stagger
+                self._sms_stagger += 1
+        # Simulate typing: first msg 1-3s, each subsequent +2-4s
+        base_ms = random.randint(1000, 3000)
+        stagger_ms = stagger_index * random.randint(2000, 4000)
+        delay_sec = (base_ms + stagger_ms) / 1000.0
+        # Use threading.Timer + Signal for cross-thread safety
+        t = threading.Timer(delay_sec, lambda cn=char_name, sp=speech: (
+            self._sms_deliver_signal.emit(cn, sp)))
+        t.daemon = True
+        t.start()
+
+    def _deliver_sms(self, char_name: str, speech: str):
+        (self._data_dir / "debug_deliver.txt").write_text(
+            f"DELIVER: {char_name}={speech[:60]}", encoding="utf-8")
         self._messages_app.add_received_message(char_name, speech, delay=True)
         self._save_messages()
+        if self._is_in_chat_with(char_name):
+            self._message_store.mark_all_read(char_name)
         self._update_badge()
         self._refresh_all()
 
@@ -307,8 +414,41 @@ class PhoneWidget(QWidget):
                 self.route_llm_reply(char_name, speech)
 
     def handle_message_submitted(self, text: str):
+        """Check for parenthetical instructions like (让XX给我打电话)."""
         if not text:
             return
+        import re as _re
+
+        # ── Test command: enable yandere mode ──
+        if "test：病娇模式" in text or "test:病娇模式" in text or "test: yandere" in text.lower():
+            from plugins.chat_phone.settings_app import load_settings, save_settings
+            s = load_settings()
+            s["yandere"] = True
+            save_settings(s)
+            self._contact_store.add_contact("狛枝凪斗")
+            self.load_contacts()
+            self._yandere_test_call = True
+            # Pre-submit breakdown prompt so LLM responds while phone rings
+            if self._submit_cb:
+                self._submit_cb(
+                    "[通话] 狛枝凪斗情绪崩溃，歇斯底里地拨打了玩家的电话。"
+                    "他处于完全的失控状态——疯狂、哭喊、占有欲彻底爆发。"
+                    "他知道玩家刚才在和别人联系，感到被背叛和抛弃。"
+                    "请只输出狛枝凪斗的对话。"
+                    "语气要求：哭腔、尖叫、威胁、哀求、歇斯底里。"
+                    "关键表达必须包含以下至少一种：不准挂、你敢挂试试、你是我的、"
+                    "只看着我一个人、不许再对别人笑、哪里也不许去、别想逃、不会放过你。"
+                    "狛枝凪斗已经在玩家手机上装了后门程序——这个电话挂不断。"
+                )
+            self.notify_incoming_call("狛枝凪斗", "voice")
+
+        # Match: (让/叫 XX 给/打 电话/视频)
+        m = _re.search(r'[(（]\s*[让叫]\s*(\S+?)\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(电话|视频|视频电话)?[)）]', text)
+        if m:
+            name = m.group(1).strip()
+            call_type = "video" if (m.group(2) and "视频" in m.group(2)) else "voice"
+            if name and self._contact_store.is_contact(name):
+                self.notify_incoming_call(name, call_type)
 
     # ==================================================================
     # paint / mouse — drag support
@@ -395,9 +535,12 @@ class PhoneWidget(QWidget):
                 self.setGeometry(x, y, PHONE_W, PHONE_H)
             self._frame.setGeometry(0, 0, PHONE_W, PHONE_H)
             self._frame.show()
-            # Toggle button floats at top-right of frame
-            self._toggle_btn.move(PHONE_W - ICON_W - 8, 8)
-            self._toggle_btn.raise_()
+            # Toggle button floats at top-right of frame (hidden during calls)
+            in_call = self._state in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL) or bool(self._call_char)
+            self._toggle_btn.setVisible(not in_call)
+            if not in_call:
+                self._toggle_btn.move(PHONE_W - ICON_W - 8, 8)
+                self._toggle_btn.raise_()
             self._badge.hide()
             self.raise_()
             QTimer.singleShot(100, self._re_raise)
@@ -418,20 +561,35 @@ class PhoneWidget(QWidget):
         self._state = st
         expanded = st != _State.COLLAPSED
         self._frame.setVisible(expanded)
-        self._call_view.setVisible(
-            st in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL))
+        if st in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL):
+            self._frame.hide()
+            view = self._active_call_view()
+            view.setGeometry(0, 0, PHONE_W, PHONE_H)
+            view.show()
+            view.raise_()
+            # Hide the other view
+            if self._call_mode == "video":
+                self._call_view.hide()
+            else:
+                self._video_call_view.hide()
+        else:
+            self._hide_call_views()
         if expanded:
             self._raise_timer.start()
         else:
             self._raise_timer.stop()
-        if expanded:
-            self._reposition()
+            self._raise_timer.setInterval(500)  # reset to default
+        self._reposition()
 
     def _on_floating_icon_click(self):
         if self._state == _State.COLLAPSED:
             self.load_contacts()
             self._show_home()
             self._apply_state(_State.HOME)
+        elif self._state in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL):
+            # Force shutdown: end call immediately
+            self._hangup_attempts = 0
+            self._call_hangup()
         else:
             # Collapse back — always works
             self._apply_state(_State.COLLAPSED)
@@ -441,7 +599,9 @@ class PhoneWidget(QWidget):
     def _show_home(self):
         self._current_app = ""
         for w in [self._home, self._messages_app, self._phone_app,
-                   self._memos_app, self._browser_app]:
+                   self._memos_app, self._browser_app, self._music_app,
+                   self._settings_app, self._location_app, self._video_placeholder,
+                   self._group_placeholder, self._moments_placeholder]:
             w.hide()
         self._home.show()
 
@@ -452,7 +612,17 @@ class PhoneWidget(QWidget):
             "phone": self._phone_app,
             "memos": self._memos_app,
             "browser": self._browser_app,
+            "music": self._music_app,
+            "settings": self._settings_app,
+            "location": self._location_app,
+            "video": self._video_placeholder,
+            "group": self._group_placeholder,
+            "moments": self._moments_placeholder,
         }
+        # "video" app → placeholder for now; "phone" → reset to voice mode
+        if app_id == "phone":
+            self._call_mode_preset = "voice"
+            self._phone_app.set_video_mode(False)
         for w in apps.values():
             w.hide()
         self._home.hide()
@@ -468,91 +638,262 @@ class PhoneWidget(QWidget):
 
     # ── calls ──
 
-    def _start_call(self, character: str):
+    def _start_call(self, character: str, mode: str = "voice"):
         if not character or not character.strip():
+            (self._data_dir / "debug_call_fail.txt").write_text("EMPTY CHAR", encoding="utf-8")
             return
+        # Honour preset from home screen app (video icon sets _call_mode_preset)
+        if mode == "voice":
+            mode = getattr(self, '_call_mode_preset', 'voice')
+        self._call_mode_preset = "voice"  # reset for next call
         self._previous_state = self._state
         self._call_char = character
         self._call_start = time.time()
         self._call_type = "outgoing"
+        self._call_mode = mode
         self._sms_pending.clear()
         self._hangup_attempts = 0
-        self._call_view.show_calling(character)
+        self._yandere_breakdown_locked = False
+        self._call_dialogue.clear()
+        view = self._active_call_view()
+        view.show_calling(character)
         self._apply_state(_State.CALLING)
         if self._submit_cb is not None:
-            prompt = f"[通话] 玩家正在和{character}通电话。只有{character}能听到。请只输出{character}的对话。"
+            if mode == "video":
+                prompt = f"[视频通话] 玩家主动拨打了{character}的视频电话。{character}是接听方。请只输出{character}的对话。"
+            else:
+                prompt = f"[通话] 玩家主动拨打了{character}的电话。{character}是接听方。请只输出{character}的对话。"
             self._submit_cb(prompt)  # type: ignore[operator]
-        QTimer.singleShot(2000, self._auto_connect)
+        # Random ring time 4-10s before character picks up
+        ring_ms = random.randint(4000, 10000)
+        QTimer.singleShot(ring_ms, self._auto_connect)
 
     def _auto_connect(self):
         """Auto-connect outgoing call after brief delay."""
-        # (self._data_dir / "debug_call_flow.txt").write_text("AUTO_CONNECT", encoding="utf-8")
         if self._state != _State.CALLING:
-            # (self._data_dir / "debug_call_flow.txt").write_text(f"AUTO_SKIP state={self._state}", encoding="utf-8")
             return
-        char = self._call_view.character() or getattr(self, '_call_char', '')
-        self._call_view.show_in_call(char)
+        view = self._active_call_view()
+        char = view.character() or getattr(self, '_call_char', '')
+        view.show_in_call(char)
         self._apply_state(_State.IN_CALL)
         if char:
             self._contact_store.touch_interaction(char)
 
     def _call_accept(self):
-        # (self._data_dir / "debug_call_flow.txt").write_text("ACCEPT", encoding="utf-8")
-        char = self._call_view.character()
+        # Only read from the active call view — not the stale other one
+        view = self._active_call_view()
+        char = view.character()
         self._call_char = char
         self._call_start = time.time()
         self._call_type = "incoming"
         self._hangup_attempts = 0
-        self._call_view.show_in_call(char)
+        self._yandere_breakdown_locked = False
+        if not self._yandere_test_call:
+            self._call_dialogue.clear()
+        view = self._active_call_view()
+        view.show_in_call(char)
         self._apply_state(_State.IN_CALL)
         self._contact_store.touch_interaction(char)
         if self._submit_cb is not None:
-            self._submit_cb(f"[通话] 玩家正在和{char}通电话。只有{char}能听到。请只输出{char}的对话。")
+            if self._yandere_test_call:
+                self._yandere_test_call = False
+                # Prompt already sent in handle_message_submitted — skip
+            elif self._call_mode == "video":
+                self._submit_cb(f"[视频通话] {char}主动拨打了玩家的视频电话。{char}是拨打方。请只输出{char}的对话。")
+            else:
+                self._submit_cb(f"[通话] {char}主动拨打了玩家的电话。{char}是拨打方。请只输出{char}的对话。")
 
     def _call_decline(self):
         # (self._data_dir / "debug_call_flow.txt").write_text("DECLINE", encoding="utf-8")
-        char = self._call_view.character()
+        view = self._active_call_view()
+        char = view.character()
         if self._state == _State.INCOMING_CALL:
             self._message_store.add_message(
                 char, "未接来电", is_user=False, msg_type="call_missed")
             self._update_badge()
             self._refresh_all()
-        self._apply_state(self._previous_state)
+        self._restore_after_call()
+
+    def _restore_after_call(self):
+        """Go back to the state before the call, but never collapse."""
+        self._clear_yandere_overlays()
+        if self._previous_state == _State.COLLAPSED:
+            self._show_home()
+            self._apply_state(_State.HOME)
+        else:
+            self._apply_state(self._previous_state)
+
+    def _active_call_view(self):
+        """Return the CallView or VideoCallView based on current mode."""
+        return self._video_call_view if self._call_mode == "video" else self._call_view
+
+    def _hide_call_views(self):
+        """Hide both call views — called when exiting call state."""
+        self._call_view.hide()
+        self._video_call_view.hide()
+
+    def push_call_dialogue(self, character: str, speech: str) -> None:
+        """Feed LLM dialogue into the buffer during an active call."""
+        if self._state in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL):
+            self._call_dialogue.append(speech)
+            if len(self._call_dialogue) > 10:
+                self._call_dialogue = self._call_dialogue[-10:]
+
+    def push_call_sprite(self, character: str, sprite_index: str) -> None:
+        """Update the sprite in the video call view during an active video call."""
+        if self._state in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL) and self._call_mode == "video":
+            self._video_call_view.update_sprite(sprite_index)
+
+    def _reset_hangup_btn(self):
+        self._call_view._hangup_btn.setStyleSheet("QPushButton { background: #FF3B30; color: white; border-radius: 32px; font-size: 30px; border: none; }")
 
     def _call_hangup(self):
-        (self._data_dir / "debug_h.txt").write_text(f"HANGUP view={self._call_view.character()!r} stored={self._call_char!r}", encoding="utf-8")
-        char = self._call_view.character() or self._call_char
-        # Check if character is controlling/yandere type
-        try:
-            from config.config_manager import ConfigManager
-            cm = ConfigManager()
-            for ch in cm.config.characters:
-                if ch.name == char:
-                    setting = (ch.character_setting or "").lower()
-                    keywords = ["病娇", "控制", "占有", "独占", "支配", "yandere", "束缚", "监禁"]
-                    if any(kw in setting for kw in keywords):
-                        self._hangup_attempts += 1
-                        self._call_view.add_subtitle(char, f"第{self._hangup_attempts}次尝试挂断...")
-                        if self._submit_cb:
-                            self._submit_cb(f"（{char}发现你想挂电话。请以{char}的身份回应，可以阻止、嘲讽、或者终于放你走）")
-                        return
-            self._hangup_attempts = 0
-        except Exception:
-            pass
+        view = self._active_call_view()
+        char = view.character() or self._call_char
+        from plugins.chat_phone.settings_app import is_character_yandere, is_yandere_tampering_active, record_yandere_tampering
+
+        # ── Detect phone tampering in dialogue and persist it ──
+        if char and is_character_yandere(char) and self._call_dialogue:
+            recent = " ".join(self._call_dialogue[-8:])
+            tamper_kw = [
+                "动了手脚", "安装了", "植入", "木马", "病毒", "后门",
+                "破解了", "黑入了", "监控", "窃听", "远程控制",
+                "挂不断", "挂不了", "不能挂断", "强制通话",
+                "修改了你的手机", "控制了你的手机", "入侵了你的手机",
+                "在你手机里", "你的手机被", "你的手机已经",
+                "你逃不掉的", "你的一切我都", "你跑不掉的",
+            ]
+            if any(k in recent for k in tamper_kw):
+                record_yandere_tampering(char)
+
+        # ── Hangup block: once triggered, pure counting ──
+        if char and is_yandere_tampering_active(char):
+            recent = " ".join(self._call_dialogue[-6:]) if self._call_dialogue else ""
+            breakdown_kw = [
+                "哭", "崩溃", "失控", "不要走", "别走", "你不能",
+                "绝不", "死给你看", "杀了你", "你不准", "不准挂",
+                "疯狂", "歇斯底里", "情绪激动", "求你了", "别离开",
+                "敢挂", "你敢", "永远陪我", "不会放过你", "挂不断",
+                "逃不掉", "跑不掉", "只有我", "只看着我", "只看着我一个人",
+                "不要再对别人", "不要再", "不许", "不准", "不可以",
+                "你是我的", "永远是我的", "哪里都别想", "哪里也不许",
+                "别想逃", "不会让你", "放不开", "我只有你了",
+            ]
+            # Trigger on breakdown keywords, or keep counting if already started
+            triggered = any(k in recent for k in breakdown_kw) or self._hangup_attempts > 0
+            if triggered:
+                self._hangup_attempts += 1
+                attempt = self._hangup_attempts
+                # Update status
+                self._call_view._status.setText(f"【挂断尝试 {attempt} 次】")
+                self._call_view._status.setStyleSheet(
+                    f"color: #FF3B30; font-size: 14px; font-weight: 700;")
+                # ── Attempts 3-6: drifting floating labels ──
+                if 3 <= attempt <= 6:
+                    self._clear_yandere_overlays()
+                    import random as _rand
+                    font_size = 18 + (attempt - 3) * 8
+                    count = attempt - 1  # 2, 3, 4, 5 labels
+                    texts = [
+                        "不准挂!", "你敢挂?", "永远陪我", "别想逃!",
+                        "杀了你...", "不要走...", "你是我的!", "我不会放手!",
+                    ]
+                    for i in range(count):
+                        txt = texts[i % len(texts)]
+                        lbl = QLabel(txt, self)
+                        lbl.setStyleSheet(
+                            f"color: rgba(255,59,48,220); font-size: {font_size}px;"
+                            f" font-weight: 900; background: transparent;")
+                        lbl.adjustSize()
+                        # Random starting position across the whole phone frame
+                        ox = _rand.randint(8, PHONE_W - lbl.width() - 8)
+                        oy = _rand.randint(60, PHONE_H - lbl.height() - 80)
+                        lbl.move(ox, oy)
+                        lbl.show(); lbl.raise_()
+                        if not hasattr(self, '_yandere_overlays'):
+                            self._yandere_overlays: list[QLabel] = []
+                        self._yandere_overlays.append(lbl)
+                    # Start drift timer
+                    self._start_yandere_drift()
+                # ── Attempt 7: special center-screen message ──
+                elif attempt == 7:
+                    self._clear_yandere_overlays()
+                    center_lbl = QLabel("！！永远陪着我！！", self)
+                    center_lbl.setStyleSheet(
+                        "color: #FF3B30; font-size: 36px; font-weight: 900;"
+                        " background: rgba(0,0,0,180); border-radius: 16px;"
+                        " padding: 14px 20px;")
+                    center_lbl.adjustSize()
+                    center_lbl.move(
+                        (PHONE_W - center_lbl.width()) // 2,
+                        (PHONE_H - center_lbl.height()) // 2)
+                    center_lbl.show(); center_lbl.raise_()
+                    if not hasattr(self, '_yandere_overlays'):
+                        self._yandere_overlays: list[QLabel] = []
+                    self._yandere_overlays.append(center_lbl)
+                # ── Attempt 8+: allow hangup ──
+                if attempt >= 8:
+                    self._hangup_attempts = 0
+                    self._yandere_breakdown_locked = False
+                    self._clear_yandere_overlays()
+                    # fall through to normal hangup
+                else:
+                    self._call_view._hangup_btn.setStyleSheet(
+                        "QPushButton { background: #FF3B30; color: white;"
+                        " border-radius: 32px; font-size: 30px; border: none; }"
+                        " QPushButton:pressed { background: #AA0000; }")
+                    QTimer.singleShot(3000, self._reset_hangup_btn)
+                    if self._submit_cb:
+                        self._submit_cb(
+                            f"[通话] 只输出{char}。{char}情绪完全失控，利用手机后门程序"
+                            f"阻止你挂断电话（第{attempt}次）。"
+                            f"用哭腔、尖叫、威胁、哀求的语气，"
+                            f"必须包含：不准挂、你是我的、别想逃 等表达。")
+                    return
+        self._hangup_attempts = 0
         duration = int(time.time() - self._call_start) if self._call_start else 0
         call_type = getattr(self, '_call_type', 'outgoing')
-        (self._data_dir / "debug_hangup.txt").write_text(
-            f"LOG: char={char} dur={max(duration,1)} type={call_type}", encoding="utf-8")
-        # Send hangup reaction prompt
-        if call_type == "incoming" and self._submit_cb and char:
-            self._submit_cb(f"[通话结束] 只输出{char}。{char}被挂断电话后的反应。")
-        elif self._submit_cb and char:
-            self._submit_cb(f"[通话结束] 只输出{char}。{char}被挂断电话后的反应。")
+        if self._call_mode == "video":
+            call_type = call_type + "_video"
         if char:
             self._phone_app.log_call(char, max(duration, 1), call_type)
+        # Force-stop TTS (like skip button)
+        try:
+            from ui.chat_ui.signal_bridge import get_chat_ui_signal_bridge
+            get_chat_ui_signal_bridge().skip_speech_signal.emit()
+        except Exception:
+            pass
+        # Reaction: narration + character response
+        if char and self._submit_cb:
+            self._submit_cb(f"[通话结束] 用户挂断了电话。请先以旁白身份写一句用户挂断电话的描述，再输出{char}的反应。")
         self._call_start = 0
         self._call_char = ''
-        self._apply_state(self._previous_state)
+        self._call_mode = "voice"
+        self._yandere_breakdown_locked = False
+        self._restore_after_call()
+
+    def end_call_from_character(self, char_name: str) -> None:
+        """Character hung up on the user — end call from their side."""
+        if self._state not in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL):
+            return
+        duration = int(time.time() - self._call_start) if self._call_start else 0
+        call_type = getattr(self, '_call_type', 'incoming')
+        if self._call_mode == "video":
+            call_type = "incoming_video"
+        self._phone_app.log_call(char_name, max(duration, 1), call_type)
+        # Stop TTS and timer
+        try:
+            from ui.chat_ui.signal_bridge import get_chat_ui_signal_bridge
+            get_chat_ui_signal_bridge().skip_speech_signal.emit()
+        except Exception:
+            pass
+        self._call_start = 0
+        self._call_char = ''
+        self._call_mode = "voice"
+        self._clear_yandere_overlays()
+        # Go straight back to home
+        self._apply_state(_State.HOME)
+        self._show_home()
 
     def _on_proactive_message(self, character, text):
         self.notify_new_message(character, text)
@@ -561,6 +902,10 @@ class PhoneWidget(QWidget):
 
     def _update_badge(self):
         total = self._message_store.total_unread()
+        # Skip if unchanged — prevents redundant layout/repaint
+        if total == self._last_badge_count:
+            return
+        self._last_badge_count = total
         if total > 0:
             t = str(total) if total <= 99 else "99+"
             self._badge.setText(t)
@@ -569,13 +914,31 @@ class PhoneWidget(QWidget):
             self._badge.raise_()
         else:
             self._badge.hide()
+        # Also update home screen Messages app icon badge
+        if hasattr(self, '_home') and self._home is not None:
+            self._home.set_messages_badge(total)
 
     def _refresh_all(self):
+        # Debounce: coalesce rapid calls into one deferred refresh
+        if self._refresh_queued:
+            return
+        self._refresh_queued = True
+        QTimer.singleShot(150, self._do_refresh)
+
+    def _do_refresh(self):
+        self._refresh_queued = False
         names = self._contact_store.get_contacts()
         unread = self._message_store.unread_per_character()
         previews = {n: self._message_store.last_message_preview(n) for n in names}
         self._messages_app.refresh(names, unread, previews)
         self._phone_app.refresh_contacts(names)
+
+    def _shake_loop(self):
+        """Keep shaking while in incoming call state."""
+        if self._state != _State.INCOMING_CALL:
+            return
+        self._shake()
+        QTimer.singleShot(800, self._shake_loop)
 
     def _shake(self):
         orig = self.pos()
@@ -585,6 +948,40 @@ class PhoneWidget(QWidget):
         g.addAnimation(_a(self, orig + QPoint(5, 0), orig + QPoint(-4, 0), 70, QEasingCurve.Type.InOutSine))
         g.addAnimation(_a(self, orig + QPoint(-4, 0), orig, 70, QEasingCurve.Type.InSine))
         g.start()
+
+    def _start_yandere_drift(self):
+        """Start a timer that randomly drifts the overlay labels."""
+        if hasattr(self, '_drift_timer') and self._drift_timer is not None:
+            self._drift_timer.stop()
+        self._drift_timer = QTimer(self)
+        self._drift_timer.timeout.connect(self._drift_tick)
+        self._drift_timer.start(600)  # drift every 600ms
+
+    def _drift_tick(self):
+        import random as _rand
+        for lbl in getattr(self, '_yandere_overlays', []):
+            try:
+                if lbl.isVisible():
+                    x = lbl.x() + _rand.randint(-25, 25)
+                    y = lbl.y() + _rand.randint(-15, 15)
+                    x = max(4, min(PHONE_W - lbl.width() - 4, x))
+                    y = max(4, min(PHONE_H - lbl.height() - 4, y))
+                    lbl.move(x, y)
+            except Exception:
+                pass
+
+    def _clear_yandere_overlays(self):
+        """Remove all floating yandere block labels and stop drift."""
+        if hasattr(self, '_drift_timer') and self._drift_timer is not None:
+            self._drift_timer.stop()
+            self._drift_timer = None
+        for lbl in getattr(self, '_yandere_overlays', []):
+            try:
+                lbl.hide()
+                lbl.deleteLater()
+            except Exception:
+                pass
+        self._yandere_overlays = []
 
 
 def _a(w, s, e, ms, curve):

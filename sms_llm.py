@@ -32,7 +32,7 @@ def _call_llm(character: str, setting: str, text: str, history: list[str]) -> st
     cm = ConfigManager()
     cfg = cm.config.api_config
     provider = cfg.llm_provider or "ChatGPT"
-    api_key = cm.get_api_key(provider)
+    api_key = (cfg.llm_api_key or {}).get(provider, "")
     base_url = cfg.llm_base_url or ""
     model = (cfg.llm_model or {}).get(provider, "") if isinstance(cfg.llm_model, dict) else ""
 
@@ -68,8 +68,12 @@ def _call_llm(character: str, setting: str, text: str, history: list[str]) -> st
     ]
 
     try:
-        result = adapter.chat(messages, stream=False)
-        reply = str(result or "").strip()
+        result = adapter.chat(messages, stream=False, response_format={'type': 'text'})
+        # Extract text from ChatCompletion object
+        try:
+            reply = result.choices[0].message.content or ""
+        except Exception:
+            reply = str(result or "")
         # Clean common formatting artifacts
         reply = reply.replace(f"{character}：", "").replace(f"{character}:", "").strip()
         reply = reply.replace("短信内容：", "").replace("回复：", "").strip()

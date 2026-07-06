@@ -88,7 +88,7 @@ def bug_character_phone(character_name: str) -> str:
         all_names = []
     if character_name not in all_names:
         return f"没有找到名为「{character_name}」的角色。"
-    from plugins.chat_phone.settings_app import add_hacked_character
+    from plugins.shinsekai_chat_phone.settings_app import add_hacked_character
     added = add_hacked_character(character_name)
     if added:
         return f"已成功在「{character_name}」的手机上安装监控程序。玩家可以查看其手机私密活动。"
@@ -97,12 +97,12 @@ def bug_character_phone(character_name: str) -> str:
 
 
 def _build_freq_tab():
-    from plugins.chat_phone.freq_config_ui import FreqConfigWidget
+    from plugins.shinsekai_chat_phone.freq_config_ui import FreqConfigWidget
     return FreqConfigWidget()
 
 
 def _save_avatar_config(values):
-    from plugins.chat_phone.avatar_manager import save_avatar_override, load_avatar_overrides, avatar_config_path
+    from plugins.shinsekai_chat_phone.avatar_manager import save_avatar_override, load_avatar_overrides, avatar_config_path
     name = str(values.get("character", "")).strip()
     path = str(values.get("avatar_path", "")).strip().strip('"').strip("'")
     if name and path:
@@ -151,8 +151,8 @@ class ChatPhonePlugin(PluginBase):
         def build_widget(ctx: ChatUIContext) -> object:
             global _phone_widget, _monitor
             try:
-                from plugins.chat_phone.phone_widget import PhoneWidget
-                from plugins.chat_phone.proactive_monitor import ProactiveMonitor
+                from plugins.shinsekai_chat_phone.phone_widget import PhoneWidget
+                from plugins.shinsekai_chat_phone.proactive_monitor import ProactiveMonitor
                 w = PhoneWidget(submit_cb=ctx.submit_user_message)
                 _phone_widget = w
                 monitor = ProactiveMonitor(w.contact_store(), w.message_store())
@@ -268,7 +268,7 @@ class ChatPhonePlugin(PluginBase):
                     continue
                 # COT: don't display, but scan for yandere tampering
                 if name == "COT":
-                    from plugins.chat_phone.settings_app import is_character_yandere, record_yandere_tampering
+                    from plugins.shinsekai_chat_phone.settings_app import is_character_yandere, record_yandere_tampering
                     _tamper_kw = [
                         "动了手脚", "安装了", "植入", "木马", "病毒", "后门",
                         "破解了", "黑入了", "监控", "窃听", "远程控制",
@@ -292,7 +292,7 @@ class ChatPhonePlugin(PluginBase):
                 sprite = str(item.get("sprite", "-1") or "-1").strip()
                 w.push_call_sprite(name, sprite)
                 # Detect yandere phone tampering in character dialogue
-                from plugins.chat_phone.settings_app import is_character_yandere, record_yandere_tampering
+                from plugins.shinsekai_chat_phone.settings_app import is_character_yandere, record_yandere_tampering
                 if is_character_yandere(name):
                     _tamper_kw = [
                         "动了手脚", "安装了", "植入", "木马", "病毒", "后门",
@@ -352,7 +352,7 @@ class ChatPhonePlugin(PluginBase):
                     "除此之外不要输出任何角色对话——短信是私密的，不会出现在公开聊天中。"
                 )
                 # Monitor mode: player spies on specific characters' phones
-                from plugins.chat_phone.settings_app import get_hacked_characters
+                from plugins.shinsekai_chat_phone.settings_app import get_hacked_characters
                 hacked = get_hacked_characters()
                 if hacked:
                     names = "、".join(hacked)
@@ -372,7 +372,7 @@ class ChatPhonePlugin(PluginBase):
                         f"不要有任何察觉或提及被监控的事。"
                     )
                 # Yandere easter egg: only for characters with yandere keywords
-                from plugins.chat_phone.settings_app import get_yandere_characters
+                from plugins.shinsekai_chat_phone.settings_app import get_yandere_characters
                 yandere_chars = get_yandere_characters()
                 if yandere_chars:
                     yan_names = "、".join(yandere_chars)
@@ -472,7 +472,7 @@ class ChatPhonePlugin(PluginBase):
         # ── Combined: Avatar + Theme + Frequency ──
         char_names = list(char_settings.keys())
         def _load_combined():
-            from plugins.chat_phone.settings_app import get_theme
+            from plugins.shinsekai_chat_phone.settings_app import get_theme
             d = {"theme": get_theme(), "character": char_names[0] if char_names else "", "avatar_path": "",
                  "char_name": char_names[0] if char_names else "", "sms": 0.1, "call": 0.03,
                  "freq_enabled": True}
@@ -490,9 +490,9 @@ class ChatPhonePlugin(PluginBase):
             return d
         def _save_combined(v):
             _save_avatar_config(v)
-            from plugins.chat_phone.settings_app import save_settings, load_settings, get_theme
+            from plugins.shinsekai_chat_phone.settings_app import save_settings, load_settings, get_theme
             s = load_settings(); s["theme"] = str(v.get("theme", get_theme())); save_settings(s)
-            from plugins.chat_phone.styles import notify_theme_change; notify_theme_change(s["theme"])
+            from plugins.shinsekai_chat_phone.styles import notify_theme_change; notify_theme_change(s["theme"])
             try:
                 fp = Path("data/plugins/com.shinsekai.chat_phone/freq_config.json")
                 fp.parent.mkdir(parents=True, exist_ok=True)
@@ -533,10 +533,10 @@ class ChatPhonePlugin(PluginBase):
 
         # Music player config
         def _load_music():
-            from plugins.chat_phone.music_app import get_player_path
+            from plugins.shinsekai_chat_phone.music_app import get_player_path
             return {"exe_path": get_player_path()}
         def _save_music(v):
-            from plugins.chat_phone.music_app import set_player_path
+            from plugins.shinsekai_chat_phone.music_app import set_player_path
             set_player_path(str(v.get("exe_path", "")).strip())
 
         register.register_frontend_config_page(FrontendConfigContribution(

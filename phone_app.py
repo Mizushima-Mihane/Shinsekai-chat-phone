@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 # (QPushButton already in imports above)
 
 
-from plugins.chat_phone.styles import (
+from plugins.shinsekai_chat_phone.styles import (
     AVATAR_COLORS, get_surface, ON_SURFACE, ON_SURFACE_VARIANT,
     OUTLINE_VARIANT, chip_style,
 )
@@ -32,7 +32,7 @@ def _call_direct(name):
     if not isinstance(name, str) or not name.strip():
         return
     try:
-        from plugins.chat_phone.plugin import _phone_widget
+        from plugins.shinsekai_chat_phone.plugin import _phone_widget
         if _phone_widget:
             _phone_widget._start_call(name)
     except Exception:
@@ -77,7 +77,7 @@ class PhoneApp(QWidget):
             name = btn.property("char_name")
             if name and isinstance(name, str) and name.strip():
                 try:
-                    from plugins.chat_phone.plugin import _phone_widget
+                    from plugins.shinsekai_chat_phone.plugin import _phone_widget
                     if _phone_widget:
                         _phone_widget._start_call(name, mode="voice")
                 except Exception:
@@ -441,7 +441,7 @@ class PhoneApp(QWidget):
             return
         # Fallback: read directly from contact store
         try:
-            from plugins.chat_phone.contact_store import ContactStore
+            from plugins.shinsekai_chat_phone.contact_store import ContactStore
             cs = ContactStore()
             all_c = cs.get_contacts()
             if all_c:
@@ -475,7 +475,7 @@ def _top_bar(title: str, on_back) -> QWidget:
 
 
 def _avatar(name: str, size: int) -> QLabel:
-    from plugins.chat_phone.avatar_manager import get_avatar_for_character
+    from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
     av = QLabel()
     av.setFixedSize(size, size)
     av.setAlignment(Qt.AlignmentFlag.AlignCenter)

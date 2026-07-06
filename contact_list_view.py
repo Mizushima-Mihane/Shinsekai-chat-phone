@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from plugins.chat_phone.styles import AVATAR_COLORS, TEXT_PRIMARY, TEXT_SECONDARY
+from plugins.shinsekai_chat_phone.styles import AVATAR_COLORS, TEXT_PRIMARY, TEXT_SECONDARY
 
 
 class ContactListView(QWidget):

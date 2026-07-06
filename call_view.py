@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
-from plugins.chat_phone.styles import (
+from plugins.shinsekai_chat_phone.styles import (
     AVATAR_COLORS, get_surface, ON_SURFACE, ON_SURFACE_VARIANT,
 )
 
@@ -120,7 +120,7 @@ class CallView(QWidget):
     def character(self) -> str: return self._character
 
     def _set_avatar(self, name):
-        from plugins.chat_phone.avatar_manager import get_avatar_for_character
+        from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
         from PySide6.QtGui import QPixmap, QPainter, QBrush
         pix = get_avatar_for_character(name)
         if pix and not pix.isNull():

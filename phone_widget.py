@@ -18,18 +18,18 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from plugins.chat_phone.browser_app import BrowserApp
-from plugins.chat_phone.call_view import CallView
-from plugins.chat_phone.contact_store import ContactStore
-from plugins.chat_phone.home_screen import HomeScreen
-from plugins.chat_phone.video_call_view import VideoCallView
-from plugins.chat_phone.messages_app import MessagesApp
-from plugins.chat_phone.message_store import MessageStore
-from plugins.chat_phone.music_app import MusicApp
-from plugins.chat_phone.settings_app import SettingsApp
-from plugins.chat_phone.phone_app import PhoneApp
-from plugins.chat_phone.styles import PHONE_QSS, _darken
-from plugins.chat_phone.voice_memo_app import VoiceMemosApp
+from plugins.shinsekai_chat_phone.browser_app import BrowserApp
+from plugins.shinsekai_chat_phone.call_view import CallView
+from plugins.shinsekai_chat_phone.contact_store import ContactStore
+from plugins.shinsekai_chat_phone.home_screen import HomeScreen
+from plugins.shinsekai_chat_phone.video_call_view import VideoCallView
+from plugins.shinsekai_chat_phone.messages_app import MessagesApp
+from plugins.shinsekai_chat_phone.message_store import MessageStore
+from plugins.shinsekai_chat_phone.music_app import MusicApp
+from plugins.shinsekai_chat_phone.settings_app import SettingsApp
+from plugins.shinsekai_chat_phone.phone_app import PhoneApp
+from plugins.shinsekai_chat_phone.styles import PHONE_QSS, _darken
+from plugins.shinsekai_chat_phone.voice_memo_app import VoiceMemosApp
 
 _logger = logging.getLogger("chat_phone.widget")
 
@@ -106,7 +106,7 @@ class PhoneWidget(QWidget):
 
         # ── data ──
         self._data_dir = _data_dir()
-        import plugins.chat_phone.phone_app as _pa
+        import plugins.shinsekai_chat_phone.phone_app as _pa
         _pa.set_call_log_dir(self._data_dir)
         self._contact_store = ContactStore(self._data_dir / "contacts.json")
         self._message_store = MessageStore()
@@ -142,7 +142,7 @@ class PhoneWidget(QWidget):
         self._frame = QWidget(self)
         self._frame.setObjectName("PhoneFrame")
         self._frame.setFixedSize(PHONE_W, PHONE_H)
-        from plugins.chat_phone.settings_app import get_theme
+        from plugins.shinsekai_chat_phone.settings_app import get_theme
         theme = get_theme()
         self._theme = _darken(theme, 0.06)
         self._frame.setStyleSheet(
@@ -330,7 +330,7 @@ class PhoneWidget(QWidget):
             self._message_store.mark_all_read(character)
         self._update_badge()
         self._refresh_all()
-        from plugins.chat_phone.settings_app import is_dnd
+        from plugins.shinsekai_chat_phone.settings_app import is_dnd
         if not self._is_in_chat_with(character) and not is_dnd():
             self._shake()
 
@@ -338,7 +338,7 @@ class PhoneWidget(QWidget):
         if self._state == _State.IN_CALL:
             return
         # DND: log as missed, don't ring
-        from plugins.chat_phone.settings_app import is_dnd
+        from plugins.shinsekai_chat_phone.settings_app import is_dnd
         if is_dnd():
             label = "未接视频来电(DND)" if call_type == "video" else "未接来电(DND)"
             self._message_store.add_message(character, label, is_user=False, msg_type="call_missed")
@@ -722,7 +722,7 @@ class PhoneWidget(QWidget):
     def _call_hangup(self):
         view = self._active_call_view()
         char = view.character() or self._call_char
-        from plugins.chat_phone.settings_app import is_character_yandere, is_yandere_tampering_active, record_yandere_tampering
+        from plugins.shinsekai_chat_phone.settings_app import is_character_yandere, is_yandere_tampering_active, record_yandere_tampering
 
         # ── Detect phone tampering in dialogue and persist it ──
         if char and is_character_yandere(char) and self._call_dialogue:

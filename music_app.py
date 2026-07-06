@@ -10,7 +10,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
-from plugins.chat_phone.styles import ON_SURFACE, ON_SURFACE_VARIANT
+from plugins.shinsekai_chat_phone.styles import ON_SURFACE, ON_SURFACE_VARIANT
 
 _CONFIG = Path("data/plugins/com.shinsekai.chat_phone/music_config.json")
 _ASSETS = Path(__file__).parent / "assets"

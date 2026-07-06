@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QGridLayout, QHBoxLayout,
     QLabel, QPushButton, QVBoxLayout, QWidget,
 )
-from plugins.chat_phone.styles import (
+from plugins.shinsekai_chat_phone.styles import (
     ACCENT_BROWSER, ACCENT_MEMOS, ACCENT_MESSAGES, ACCENT_PHONE,
     get_surface, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT,
 )
@@ -68,7 +68,7 @@ class HomeScreen(QWidget):
         # Status bar: signal + battery right-aligned
         srow = QWidget(); srow.setMinimumWidth(280)
         sl = QHBoxLayout(srow); sl.setContentsMargins(20, 0, 40, 0); sl.setSpacing(4)
-        from plugins.chat_phone.settings_app import is_dnd
+        from plugins.shinsekai_chat_phone.settings_app import is_dnd
         self._dnd_icon = QLabel("\U0001F319")
         self._dnd_icon.setStyleSheet("font-size: 10px; background: transparent;")
         self._dnd_icon.setVisible(is_dnd())
@@ -86,7 +86,7 @@ class HomeScreen(QWidget):
         bat = QLabel("85% ▯")
         bat.setStyleSheet(f"color: {ON_SURFACE}; font-size: 10px; background: transparent;")
         sl.addWidget(sig_icon); sl.addWidget(sig_label); sl.addSpacing(6); sl.addWidget(bat)
-        from plugins.chat_phone.styles import _darken, get_bg
+        from plugins.shinsekai_chat_phone.styles import _darken, get_bg
         darker = _darken(get_bg(), 0.08)
         srow.setStyleSheet(f"background: {darker};")
         layout.addWidget(srow)

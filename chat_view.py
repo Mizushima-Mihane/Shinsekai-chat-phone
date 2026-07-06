@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from plugins.chat_phone.message_store import MessageStore
+from plugins.shinsekai_chat_phone.message_store import MessageStore
 
 
 class ChatView(QWidget):

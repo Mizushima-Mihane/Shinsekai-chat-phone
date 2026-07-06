@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from plugins.chat_phone.styles import (
+from plugins.shinsekai_chat_phone.styles import (
     AVATAR_COLORS, get_surface, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT,
 )
 

@@ -10,7 +10,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
-from plugins.chat_phone.styles import get_surface, ON_SURFACE_VARIANT
+from plugins.shinsekai_chat_phone.styles import get_surface, ON_SURFACE_VARIANT
 
 
 class CameraApp(QWidget):

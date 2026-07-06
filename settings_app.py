@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
-from plugins.chat_phone.styles import get_surface, get_accent, _darken, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT
+from plugins.shinsekai_chat_phone.styles import get_surface, get_accent, _darken, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT
 
 _CONFIG = Path("data/plugins/com.shinsekai.chat_phone/phone_settings.json")
 
@@ -198,7 +198,7 @@ class SettingsApp(QWidget):
         layout.addWidget(dnd_row)
 
         # ── Hacker Mode: per-character phone monitoring ──
-        from plugins.chat_phone.avatar_manager import get_all_character_names
+        from plugins.shinsekai_chat_phone.avatar_manager import get_all_character_names
         self._all_chars = get_all_character_names()
 
         hack_header = QWidget()
@@ -292,11 +292,11 @@ class SettingsApp(QWidget):
         self._settings["dnd"] = self._dnd_btn.isChecked()
         save_settings(self._settings)
         self._dnd_btn.setText("开" if self._settings["dnd"] else "关")
-        from plugins.chat_phone.home_screen import _set_dnd_visible
+        from plugins.shinsekai_chat_phone.home_screen import _set_dnd_visible
         _set_dnd_visible(self._settings["dnd"])
 
     def _open_hacker_mode(self):
-        from plugins.chat_phone.freq_config_ui import FreqConfigWidget
+        from plugins.shinsekai_chat_phone.freq_config_ui import FreqConfigWidget
         self._hacker_widget = FreqConfigWidget()
         self._hacker_widget.on_back.connect(self._close_hacker_mode)
         # Replace content with hacker widget
@@ -387,5 +387,5 @@ class SettingsApp(QWidget):
     def _set_theme(self, color: str):
         self._settings["theme"] = color
         save_settings(self._settings)
-        from plugins.chat_phone.styles import notify_theme_change
+        from plugins.shinsekai_chat_phone.styles import notify_theme_change
         notify_theme_change(color)

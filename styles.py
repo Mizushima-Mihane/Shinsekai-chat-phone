@@ -14,7 +14,7 @@ def notify_theme_change(theme):
 # ── Macaron palette ────────────────────────────────────────────────────
 def _theme():
     try:
-        from plugins.chat_phone.settings_app import get_theme
+        from plugins.shinsekai_chat_phone.settings_app import get_theme
         return get_theme()
     except Exception:
         return "#FFFAFA"

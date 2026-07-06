@@ -7,8 +7,8 @@ import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from plugins.chat_phone.contact_store import ContactStore
-from plugins.chat_phone.message_store import MessageStore, MessageType
+from plugins.shinsekai_chat_phone.contact_store import ContactStore
+from plugins.shinsekai_chat_phone.message_store import MessageStore, MessageType
 
 
 # ── message templates grouped by personality keywords ─────────────────
@@ -169,7 +169,7 @@ class ProactiveMonitor(QObject):
             call_base = fc.get("call", 0.03)
             # Yandere multiplier: only if character has yandere traits
             try:
-                from plugins.chat_phone.settings_app import is_character_yandere
+                from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
                 yandere = is_character_yandere(name)
             except Exception:
                 yandere = False
@@ -182,7 +182,7 @@ class ProactiveMonitor(QObject):
             self._urge[name] = urge
             # SMS: skip if already on a call with this character
             try:
-                from plugins.chat_phone.plugin import _phone_widget
+                from plugins.shinsekai_chat_phone.plugin import _phone_widget
                 if _phone_widget:
                     call_char = getattr(_phone_widget, '_call_char', '')
                     call_state = getattr(_phone_widget, '_state', None)
@@ -218,7 +218,7 @@ class ProactiveMonitor(QObject):
             who = "对方" if m.get("is_user") else name
             sms_hist.append(f"{who}: {m.get('text','')}")
         try:
-            from plugins.chat_phone.sms_llm import _call_llm
+            from plugins.shinsekai_chat_phone.sms_llm import _call_llm
             prompt = (
                 f"你(主动方)给对方发了一条短信，不是对方找你。"
                 f"根据你们之前的短信记录和你的性格，作为主动联系的一方，你会说什么？"

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from plugins.chat_phone.styles import (
+from plugins.shinsekai_chat_phone.styles import (
     AVATAR_COLORS, get_surface, ON_SURFACE, ON_SURFACE_VARIANT,
 )
 
@@ -262,5 +262,5 @@ def _resolve_sprite_path(character: str, sprite_index: str) -> str | None:
 
 def _load_avatar_pixmap(name: str) -> QPixmap | None:
     """Load avatar pixmap for a character (same as get_avatar_for_character)."""
-    from plugins.chat_phone.avatar_manager import get_avatar_for_character
+    from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
     return get_avatar_for_character(name)

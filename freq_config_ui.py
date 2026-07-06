@@ -147,7 +147,7 @@ class FreqConfigWidget(QWidget):
     @staticmethod
     def _notify_monitor():
         try:
-            from plugins.chat_phone.plugin import _monitor
+            from plugins.shinsekai_chat_phone.plugin import _monitor
             if _monitor:
                 _monitor.set_frequency_config(load_freq_config())
         except Exception:
@@ -162,7 +162,7 @@ class FreqConfigWidget(QWidget):
             self._cfg[name] = entry
         save_freq_config(self._cfg)
         try:
-            from plugins.chat_phone.plugin import _monitor
+            from plugins.shinsekai_chat_phone.plugin import _monitor
             if _monitor:
                 _monitor.set_frequency_config(self._cfg)
         except Exception:

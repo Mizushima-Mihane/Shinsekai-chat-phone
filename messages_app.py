@@ -8,8 +8,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from plugins.chat_phone.message_store import MessageStore
-from plugins.chat_phone.styles import (
+from plugins.shinsekai_chat_phone.message_store import MessageStore
+from plugins.shinsekai_chat_phone.styles import (
     AVATAR_COLORS, ON_SURFACE, ON_SURFACE_VARIANT, OUTLINE_VARIANT, get_surface,
 )
 
@@ -50,7 +50,7 @@ class MessagesApp(QWidget):
             name = btn.property("char_name")
             if name and isinstance(name, str) and name.strip():
                 try:
-                    from plugins.chat_phone.plugin import _phone_widget
+                    from plugins.shinsekai_chat_phone.plugin import _phone_widget
                     if _phone_widget:
                         _phone_widget._start_call(name, mode="voice")
                 except Exception:
@@ -167,7 +167,7 @@ class MessagesApp(QWidget):
         inp.setStyleSheet(f"QLineEdit {{ background: {OUTLINE_VARIANT}; color: {ON_SURFACE}; border: none; border-radius: 17px; padding: 6px 12px; font-size: 13px; }} QLineEdit:focus {{ border: 1px solid #FFB3BA; }}")
         inp.returnPressed.connect(lambda: self._send(inp))
         send = QPushButton("发送"); send.setMinimumWidth(44); send.setMinimumHeight(34)
-        from plugins.chat_phone.styles import get_accent
+        from plugins.shinsekai_chat_phone.styles import get_accent
         send.setStyleSheet(f"QPushButton {{ background: {get_accent()}; color: white; border-radius: 17px; font-size: 12px; font-weight: bold; border: none; }}")
         send.clicked.connect(lambda: self._send(inp))
         il.addWidget(inp, 1); il.addWidget(send)
@@ -218,7 +218,7 @@ class MessagesApp(QWidget):
         else: self.on_back.emit()
 
     def _avatar(self, name, size):
-        from plugins.chat_phone.avatar_manager import get_avatar_for_character
+        from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
         from PySide6.QtGui import QPixmap, QPainter, QBrush
         av = QLabel(); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pix = get_avatar_for_character(name)

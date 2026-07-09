@@ -18,8 +18,9 @@ from plugins.shinsekai_chat_phone.styles import (
 class BrowserApp(QWidget):
     on_back = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, data_dir: Path, parent=None):
         super().__init__(parent)
+        self._data_dir = data_dir
         self._thread: QThread | None = None
         self._history: list[str] = []; self._load_history()
         self._setup_ui()
@@ -75,13 +76,13 @@ class BrowserApp(QWidget):
 
     def _load_history(self):
         try:
-            p = Path("data/plugins/com.shinsekai.chat_phone/browser_history.json")
+            p = self._data_dir / "browser_history.json"
             if p.is_file(): self._history = json.loads(p.read_text(encoding="utf-8"))
         except Exception: self._history = []
 
     def _save_history(self):
         try:
-            p = Path("data/plugins/com.shinsekai.chat_phone/browser_history.json")
+            p = self._data_dir / "browser_history.json"
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(self._history, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception: pass

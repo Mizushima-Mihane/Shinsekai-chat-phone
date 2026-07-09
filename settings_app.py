@@ -13,6 +13,40 @@ from plugins.shinsekai_chat_phone.styles import get_surface, get_accent, _darken
 
 _CONFIG = Path("data/plugins/com.shinsekai.chat_phone/phone_settings.json")
 
+# ── Session-scoped state (per chat, resets on new chat) ───────────────
+# Global _CONFIG keeps only preferences (theme, yandere master switch).
+# Story content/state (dnd, hacked_characters, yandere_tampering) lives in
+# a per-session phone_session.json, injected via set_session_dir().
+_session_dir: Path | None = None
+
+
+def set_session_dir(d: Path) -> None:
+    """Inject the current chat session directory (called from PhoneWidget)."""
+    global _session_dir
+    _session_dir = d
+
+
+def _session_file() -> Path:
+    base = _session_dir if _session_dir is not None else Path(
+        "data/plugins/com.shinsekai.chat_phone/_default")
+    return base / "phone_session.json"
+
+
+def _load_session() -> dict:
+    try:
+        p = _session_file()
+        if p.is_file():
+            return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {"dnd": False, "hacked_characters": [], "yandere_tampering": {}}
+
+
+def _save_session(data: dict) -> None:
+    p = _session_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def load_settings() -> dict:
     try:
@@ -26,7 +60,7 @@ def load_settings() -> dict:
             return data
     except Exception:
         pass
-    return {"dnd": False, "hacked_characters": [], "theme": "#FFFAFA"}
+    return {"theme": "#FFFAFA"}
 
 
 def save_settings(data: dict) -> None:
@@ -35,45 +69,51 @@ def save_settings(data: dict) -> None:
 
 
 def is_dnd() -> bool:
-    return load_settings().get("dnd", False)
+    return _load_session().get("dnd", False)
+
+
+def set_dnd(enabled: bool) -> None:
+    s = _load_session()
+    s["dnd"] = bool(enabled)
+    _save_session(s)
 
 
 def get_hacked_characters() -> list[str]:
     """Return list of character names whose phones are currently bugged."""
-    return load_settings().get("hacked_characters", [])
+    return _load_session().get("hacked_characters", [])
 
 
 def add_hacked_character(name: str) -> bool:
     """Bug a character's phone. Returns True if newly added."""
-    s = load_settings()
+    s = _load_session()
     hacked = s.setdefault("hacked_characters", [])
     if name in hacked:
         return False
     hacked.append(name)
-    save_settings(s)
+    _save_session(s)
     return True
 
 
 def remove_hacked_character(name: str) -> bool:
     """Remove monitoring from a character's phone."""
-    s = load_settings()
+    s = _load_session()
     hacked = s.get("hacked_characters", [])
     if name not in hacked:
         return False
     hacked.remove(name)
     s["hacked_characters"] = hacked
-    save_settings(s)
+    _save_session(s)
     return True
 
 
 def is_character_hacked(name: str) -> bool:
     """Check if a specific character's phone is being monitored."""
-    return name in load_settings().get("hacked_characters", [])
+    return name in _load_session().get("hacked_characters", [])
 
 
 def is_monitor() -> bool:
     """Legacy: True if any character is hacked. Kept for backward compat."""
-    return len(load_settings().get("hacked_characters", [])) > 0
+    return len(_load_session().get("hacked_characters", [])) > 0
 
 
 def is_yandere() -> bool:
@@ -127,18 +167,18 @@ def is_character_yandere(name: str) -> bool:
 def get_yandere_tampering() -> dict[str, bool]:
     """Return {character_name: True} for characters whose phone tampering has been
     established in the story. Once recorded, hangup block is active for them."""
-    return load_settings().get("yandere_tampering", {})
+    return _load_session().get("yandere_tampering", {})
 
 
 def record_yandere_tampering(name: str) -> bool:
     """Record that a yandere character has tampered with the player's phone.
     Returns True if newly recorded."""
-    s = load_settings()
+    s = _load_session()
     tampering = s.setdefault("yandere_tampering", {})
     if tampering.get(name):
         return False
     tampering[name] = True
-    save_settings(s)
+    _save_session(s)
     return True
 
 
@@ -185,14 +225,14 @@ class SettingsApp(QWidget):
         dnd_desc.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px;")
         dnd_text = QVBoxLayout(); dnd_text.setSpacing(2)
         dnd_text.addWidget(dnd_label); dnd_text.addWidget(dnd_desc)
-        self._dnd_btn = QPushButton("关" if self._settings.get("dnd") else "开")
+        self._dnd_btn = QPushButton("关" if is_dnd() else "开")
         self._dnd_btn.setFixedSize(52, 28)
         self._dnd_btn.setStyleSheet(
             f"QPushButton {{ background: {get_surface()}; color: #3C2A2A; border-radius: 14px; font-size: 11px; font-weight: 600; border: none; }}"
             f"QPushButton:checked {{ background: {get_accent()}; color: white; }}"
         )
         self._dnd_btn.setCheckable(True)
-        self._dnd_btn.setChecked(self._settings.get("dnd", False))
+        self._dnd_btn.setChecked(is_dnd())
         self._dnd_btn.clicked.connect(self._toggle_dnd)
         dr.addLayout(dnd_text, 1); dr.addWidget(self._dnd_btn)
         layout.addWidget(dnd_row)
@@ -289,11 +329,11 @@ class SettingsApp(QWidget):
         layout.addStretch()
 
     def _toggle_dnd(self):
-        self._settings["dnd"] = self._dnd_btn.isChecked()
-        save_settings(self._settings)
-        self._dnd_btn.setText("开" if self._settings["dnd"] else "关")
+        enabled = self._dnd_btn.isChecked()
+        set_dnd(enabled)
+        self._dnd_btn.setText("开" if enabled else "关")
         from plugins.shinsekai_chat_phone.home_screen import _set_dnd_visible
-        _set_dnd_visible(self._settings["dnd"])
+        _set_dnd_visible(enabled)
 
     def _open_hacker_mode(self):
         from plugins.shinsekai_chat_phone.freq_config_ui import FreqConfigWidget

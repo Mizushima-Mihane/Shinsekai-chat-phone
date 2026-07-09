@@ -32,9 +32,10 @@ def _call_direct(name):
     if not isinstance(name, str) or not name.strip():
         return
     try:
-        from plugins.shinsekai_chat_phone.plugin import _phone_widget
-        if _phone_widget:
-            _phone_widget._start_call(name)
+        from plugins.shinsekai_chat_phone.plugin import get_phone_widget
+        w = get_phone_widget()
+        if w:
+            w._start_call(name)
     except Exception:
         pass
 
@@ -62,7 +63,7 @@ class PhoneApp(QWidget):
         self._dial_text = ""
         self._dial_label: QLabel | None = None
         self._title = title
-        self._show_dial = show_dial
+        self._dial_enabled = show_dial
         self._call_log: list[dict] = []
         self._chip_btns: dict[str, QPushButton] = {}
         self._log_file = "call_log.json"  # default voice log
@@ -77,16 +78,17 @@ class PhoneApp(QWidget):
             name = btn.property("char_name")
             if name and isinstance(name, str) and name.strip():
                 try:
-                    from plugins.shinsekai_chat_phone.plugin import _phone_widget
-                    if _phone_widget:
-                        _phone_widget._start_call(name, mode="voice")
+                    from plugins.shinsekai_chat_phone.plugin import get_phone_widget
+                    w = get_phone_widget()
+                    if w:
+                        w._start_call(name, mode="voice")
                 except Exception:
                     pass
 
     def set_video_mode(self, enabled: bool) -> None:
         """Switch between voice call and video call mode."""
         self._title = "视频" if enabled else "通话"
-        self._show_dial = not enabled
+        self._dial_enabled = not enabled
         self._log_file = "video_call_log.json" if enabled else "call_log.json"
         # Update top bar title
         if hasattr(self, '_title_label'):
@@ -94,7 +96,7 @@ class PhoneApp(QWidget):
         # Rebuild chips bar to properly add/remove dial tab
         self._rebuild_chips()
         # Switch off dial tab if it was active
-        if not self._show_dial and self._tab == "dial":
+        if not self._dial_enabled and self._tab == "dial":
             self._tab = "recents"
         # Reload log from appropriate file
         self._call_log = []
@@ -102,7 +104,7 @@ class PhoneApp(QWidget):
         self._show_content()
 
     def _rebuild_chips(self):
-        """Rebuild the tab chips bar to reflect current _show_dial setting."""
+        """Rebuild the tab chips bar to reflect current _dial_enabled setting."""
         # Find and clear the chips widget (it's at layout index 1)
         main_layout = self.layout()
         if main_layout is None or main_layout.count() < 2:
@@ -118,7 +120,7 @@ class PhoneApp(QWidget):
         cl.setSpacing(8)
         self._chip_btns = {}
         tabs = [("recents", "最近"), ("contacts", "联系人")]
-        if self._show_dial:
+        if self._dial_enabled:
             tabs.append(("dial", "拨号"))
         for tid, label in tabs:
             btn = QPushButton(label)
@@ -133,7 +135,7 @@ class PhoneApp(QWidget):
 
     def refresh_contacts(self, contacts):
         self._contacts = list(contacts)
-        if self._tab != "dial" or not hasattr(self, '_show_dial') or not self._show_dial:
+        if self._tab != "dial" or not self._dial_enabled:
             self._show_content()
 
     # ── call log API ──
@@ -148,10 +150,6 @@ class PhoneApp(QWidget):
         }
         self._call_log.insert(0, entry)
         self._save_log()
-        from pathlib import Path
-        p = _call_log_path()
-        Path("data/plugins/com.shinsekai.chat_phone/debug_log.txt").write_text(
-            f"LOGGED: {entry} to={p} exists={p.is_file()}", encoding="utf-8")
         if self._tab == "recents":
             self._show_content()
 
@@ -191,7 +189,7 @@ class PhoneApp(QWidget):
         cl.setContentsMargins(12, 4, 12, 4)
         cl.setSpacing(8)
         tabs = [("recents", "最近"), ("contacts", "联系人")]
-        if self._show_dial:
+        if self._dial_enabled:
             tabs.append(("dial", "拨号"))
         for tid, label in tabs:
             btn = QPushButton(label)
@@ -300,9 +298,6 @@ class PhoneApp(QWidget):
 
     def _show_contacts(self):
         _clear(self._stack)
-        from pathlib import Path
-        Path("data/plugins/com.shinsekai.chat_phone/debug_contacts_show.txt").write_text(
-            f"CONTACTS={self._contacts!r}", encoding="utf-8")
         if not self._contacts:
             hint = QLabel("暂无联系人")
             hint.setAlignment(Qt.AlignmentFlag.AlignCenter)

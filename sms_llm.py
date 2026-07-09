@@ -25,8 +25,13 @@ def send_sms_llm(character: str, character_setting: str, user_text: str,
     t.start()
 
 
-def _call_llm(character: str, setting: str, text: str, history: list[str]) -> str:
-    """Make a minimal LLM API call for SMS reply."""
+def _call_llm(character: str, setting: str, text: str, history: list[str],
+              story_context: str = "") -> str:
+    """Make a minimal LLM API call for SMS reply.
+
+    ``story_context`` (optional) is a short digest of the recent main-story
+    dialogue, so the SMS can stay coherent with what just happened in the plot.
+    """
     from config.config_manager import ConfigManager
 
     cm = ConfigManager()
@@ -53,8 +58,16 @@ def _call_llm(character: str, setting: str, text: str, history: list[str]) -> st
     if history:
         hist_text = "之前的短信记录：\n" + "\n".join(history[-10:]) + "\n\n"
 
+    story_text = ""
+    if story_context:
+        story_text = (
+            f"当前剧情最近发生的事（你和对方刚刚的当面互动）：\n{story_context}\n\n"
+            f"发短信时请自然地承接剧情——可以呼应刚才发生的事、当时的气氛或情绪。\n\n"
+        )
+
     system_prompt = (
         f"你正在扮演{character}。以下是{character}的设定：\n{setting}\n\n"
+        f"{story_text}"
         f"{hist_text}"
         f"有人通过短信给{character}发了消息。"
         f"请以{character}的身份结合上下文简短回复，一两句话即可。"

@@ -50,9 +50,10 @@ class MessagesApp(QWidget):
             name = btn.property("char_name")
             if name and isinstance(name, str) and name.strip():
                 try:
-                    from plugins.shinsekai_chat_phone.plugin import _phone_widget
-                    if _phone_widget:
-                        _phone_widget._start_call(name, mode="voice")
+                    from plugins.shinsekai_chat_phone.plugin import get_phone_widget
+                    w = get_phone_widget()
+                    if w:
+                        w._start_call(name, mode="voice")
                 except Exception:
                     pass
 
@@ -191,15 +192,32 @@ class MessagesApp(QWidget):
     # ── Bubbles ──
     def _add_bubble(self, text: str, is_user: bool):
         if self._msg_layout is None: return
-        bubble = QLabel(text); bubble.setWordWrap(True)
-        bubble.setFixedWidth(220)
+        from PySide6.QtGui import QFont, QFontMetrics
+        bubble = QLabel(text)
+        _bf = QFont(); _bf.setPixelSize(13); bubble.setFont(_bf)
+        _longest = max((QFontMetrics(_bf).horizontalAdvance(_ln) for _ln in text.split("\n")), default=0)
+        if _longest + 28 <= 210 and "\n" not in text:
+            bubble.setWordWrap(False)
+            bubble.setFixedWidth(_longest + 28)
+        else:
+            bubble.setWordWrap(True)
+            bubble.setFixedWidth(210)
         if is_user:
             bubble.setStyleSheet("background: #B5EAD7; color: #2C5A3A; border-radius: 16px 4px 16px 16px; padding: 6px 10px; font-size: 13px;")
         else:
             bubble.setStyleSheet("background: #FFFFFF; color: #3C2A2A; border: 1px solid #F0E8E8; border-radius: 4px 16px 16px 16px; padding: 6px 10px; font-size: 13px;")
-        wrapper = QWidget(); wl = QHBoxLayout(wrapper); wl.setContentsMargins(0, 1, 0, 1)
-        if is_user: wl.addStretch(1); wl.addWidget(bubble)
-        else: wl.addWidget(bubble); wl.addStretch(1)
+        av = self._bubble_avatar(is_user, 30)
+        top = Qt.AlignmentFlag.AlignTop
+        wrapper = QWidget(); wl = QHBoxLayout(wrapper)
+        wl.setContentsMargins(4, 1, 4, 1); wl.setSpacing(6)
+        if is_user:
+            wl.addStretch(1)
+            wl.addWidget(bubble, 0, top)
+            wl.addWidget(av, 0, top)
+        else:
+            wl.addWidget(av, 0, top)
+            wl.addWidget(bubble, 0, top)
+            wl.addStretch(1)
         self._msg_layout.addWidget(wrapper)
 
     def _scroll_down(self):
@@ -217,21 +235,40 @@ class MessagesApp(QWidget):
         if self._view == "chat": self._show_list()
         else: self.on_back.emit()
 
-    def _avatar(self, name, size):
-        from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
+    def _rounded_pixmap_label(self, pix, size):
+        """Render a pixmap into a rounded-square QLabel (corner radius size//4)."""
         from PySide6.QtGui import QPixmap, QPainter, QBrush
         av = QLabel(); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rounded = QPixmap(size, size); rounded.fill(Qt.GlobalColor.transparent)
+        p = QPainter(rounded); p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setBrush(QBrush(pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)))
+        p.setPen(Qt.PenStyle.NoPen); p.drawRoundedRect(0, 0, size, size, size // 4, size // 4); p.end()
+        av.setPixmap(rounded)
+        return av
+
+    def _avatar(self, name, size):
+        from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
         pix = get_avatar_for_character(name)
         if pix and not pix.isNull():
-            rounded = QPixmap(size, size); rounded.fill(Qt.GlobalColor.transparent)
-            p = QPainter(rounded); p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setBrush(QBrush(pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)))
-            p.setPen(Qt.PenStyle.NoPen); p.drawRoundedRect(0, 0, size, size, size//4, size//4); p.end()
-            av.setPixmap(rounded)
-        else:
-            av.setText(name[0] if name else "?")
-            c = AVATAR_COLORS[hash(name) % len(AVATAR_COLORS)]
-            av.setStyleSheet(f"background: {c}; border-radius: {size//2}px; color: white; font-size: {size//2}px; font-weight: bold;")
+            return self._rounded_pixmap_label(pix, size)
+        av = QLabel(); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        av.setText(name[0] if name else "?")
+        c = AVATAR_COLORS[hash(name) % len(AVATAR_COLORS)]
+        av.setStyleSheet(f"background: {c}; border-radius: {size // 4}px; color: white; font-size: {size // 2}px; font-weight: bold;")
+        return av
+
+    def _bubble_avatar(self, is_user: bool, size: int = 30):
+        """Rounded-square avatar beside a bubble: character sprite, or the
+        player's uploaded avatar (key '__player__') falling back to a 我 chip."""
+        if not is_user:
+            return self._avatar(self._character, size)
+        from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
+        pix = get_avatar_for_character("__player__")
+        if pix and not pix.isNull():
+            return self._rounded_pixmap_label(pix, size)
+        from plugins.shinsekai_chat_phone.styles import get_accent
+        av = QLabel("我"); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        av.setStyleSheet(f"background: {get_accent()}; border-radius: {size // 4}px; color: white; font-size: {int(size * 0.42)}px; font-weight: bold;")
         return av
 
 

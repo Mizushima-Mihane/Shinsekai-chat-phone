@@ -30,6 +30,8 @@ from plugins.shinsekai_chat_phone.settings_app import SettingsApp
 from plugins.shinsekai_chat_phone.phone_app import PhoneApp
 from plugins.shinsekai_chat_phone.styles import PHONE_QSS, _darken
 from plugins.shinsekai_chat_phone.voice_memo_app import VoiceMemosApp
+from plugins.shinsekai_chat_phone.group_store import GroupStore
+from plugins.shinsekai_chat_phone.group_chat_app import GroupChatApp
 
 _logger = logging.getLogger("chat_phone.widget")
 
@@ -68,6 +70,9 @@ class PhoneWidget(QWidget):
     contact_list_changed = Signal()
     new_proactive_message = Signal(str, str)
     _sms_deliver_signal = Signal(str, str)
+    _incoming_call_signal = Signal(str, str)  # (character, call_type) — thread-safe LLM-driven incoming call
+    _group_deliver_signal = Signal(str, str, str)  # (group, sender, text) — thread-safe group delivery
+    _group_refresh_signal = Signal()  # LLM created a group — refresh list on GUI thread
 
     def __init__(self, submit_cb: object, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -86,6 +91,8 @@ class PhoneWidget(QWidget):
         # Call dialogue buffer — for hangup-block detection
         self._call_dialogue: list[str] = []
         self._sms_stagger: int = 0  # counter for staggered SMS delivery
+        self._group_delay: float = 0.0  # accumulated delay for the current group reply batch
+        self._group_delay_time: float = 0.0  # last group-reply schedule time (fallback batch reset)
         self._sms_lock = threading.Lock()
         # Debounce state
         self._last_badge_count: int = -1
@@ -108,8 +115,13 @@ class PhoneWidget(QWidget):
         self._data_dir = _data_dir()
         import plugins.shinsekai_chat_phone.phone_app as _pa
         _pa.set_call_log_dir(self._data_dir)
+        # Session-scoped settings (dnd / hacked_characters / yandere_tampering)
+        # follow the chat session — inject dir before any settings read below.
+        import plugins.shinsekai_chat_phone.settings_app as _sa
+        _sa.set_session_dir(self._data_dir)
         self._contact_store = ContactStore(self._data_dir / "contacts.json")
         self._message_store = MessageStore()
+        self._group_store = GroupStore(self._data_dir / "groups.json")
 
         self.setStyleSheet(PHONE_QSS)
 
@@ -118,9 +130,12 @@ class PhoneWidget(QWidget):
         self._toggle_btn = QPushButton("\U0001F4F1", self)  # 📱
         self._toggle_btn.setFixedSize(ICON_W, ICON_H)
         self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._toggle_btn.setFlat(True)
+        self._toggle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._toggle_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; font-size: 28px; }"
+            "QPushButton { background: transparent; border: none; outline: none; font-size: 28px; }"
             "QPushButton:hover { font-size: 32px; }"
+            "QPushButton:focus { background: transparent; border: none; outline: none; }"
         )
         self._toggle_btn.clicked.connect(self._on_floating_icon_click)
 
@@ -186,7 +201,7 @@ class PhoneWidget(QWidget):
         self._memos_app.on_back.connect(self._go_home)
 
 
-        self._browser_app = BrowserApp(self._frame)
+        self._browser_app = BrowserApp(self._data_dir, self._frame)
         self._browser_app.on_back.connect(self._go_home)
 
         self._music_app = MusicApp(self._frame)
@@ -205,9 +220,10 @@ class PhoneWidget(QWidget):
         self._video_placeholder = _QLabel("视频功能开发中...", self._frame)
         self._video_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._video_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
-        self._group_placeholder = _QLabel("群聊功能开发中...", self._frame)
-        self._group_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._group_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+        self._group_app = GroupChatApp(self._group_store, self._frame)
+        self._group_app.on_back.connect(self._go_home)
+        self._group_app.set_submit_callback(self._submit_cb)
+        self._group_app.set_sent_callback(self._on_group_sent)
         self._moments_placeholder = _QLabel("朋友圈功能开发中...", self._frame)
         self._moments_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._moments_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
@@ -239,11 +255,14 @@ class PhoneWidget(QWidget):
         for w in [self._home, self._messages_app, self._phone_app,
                    self._memos_app, self._browser_app, self._music_app,
                    self._settings_app, self._location_app, self._video_placeholder,
-                   self._group_placeholder, self._moments_placeholder]:
+                   self._group_app, self._moments_placeholder]:
             frame_layout.addWidget(w)
 
         self._sms_deliver_signal.connect(self._deliver_sms)
         self.new_proactive_message.connect(self._on_proactive_message)
+        self._incoming_call_signal.connect(self._on_llm_incoming_call)
+        self._group_deliver_signal.connect(self._deliver_group)
+        self._group_refresh_signal.connect(self._on_group_refresh)
 
         # ── load saved messages ──
         self._load_messages()
@@ -303,6 +322,7 @@ class PhoneWidget(QWidget):
         previews = {n: self._message_store.last_message_preview(n) for n in names}
         self._messages_app.refresh(names, unread, previews)
         self._phone_app.refresh_contacts(names)
+        self._group_app.set_contacts(names)
 
     def add_contact(self, name: str) -> bool:
         if not name or not name.strip():
@@ -325,6 +345,9 @@ class PhoneWidget(QWidget):
         self._message_store.add_message(character, text, is_user=False)
         self._messages_app.add_received_message(character, text)
         self._save_messages()
+        # Queue this proactive SMS so the main story learns about it on the
+        # next turn (proactive SMS otherwise never reaches the main chat).
+        self._record_pending_proactive(character, text)
         # If already chatting with this character, mark read & skip shake
         if self._is_in_chat_with(character):
             self._message_store.mark_all_read(character)
@@ -333,6 +356,22 @@ class PhoneWidget(QWidget):
         from plugins.shinsekai_chat_phone.settings_app import is_dnd
         if not self._is_in_chat_with(character) and not is_dnd():
             self._shake()
+
+    def _record_pending_proactive(self, character: str, text: str):
+        """Append a proactive SMS to the pending-sync queue (session-scoped)."""
+        try:
+            p = self._data_dir / "pending_proactive.json"
+            data = []
+            if p.is_file():
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    data = []
+            data.append({"name": character, "text": text})
+            p.write_text(json.dumps(data[-20:], ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+        except Exception:
+            pass
 
     def notify_incoming_call(self, character: str, call_type: str = "voice"):
         if self._state == _State.IN_CALL:
@@ -356,6 +395,20 @@ class PhoneWidget(QWidget):
         """Slot for proactive monitor's incoming_call signal."""
         self.notify_incoming_call(character, call_type)
 
+    def _on_llm_incoming_call(self, character: str, call_type: str = "voice"):
+        """Slot for LLM-driven CALL signal — runs on the GUI thread.
+
+        Ensures the caller is a contact (they must have the player's number to
+        call), then rings the phone. Invoked via ``_incoming_call_signal`` so it
+        is safe to emit from the message hook regardless of its thread.
+        """
+        character = (character or "").strip()
+        if not character:
+            return
+        if not self._contact_store.is_contact(character):
+            self.add_contact(character)
+        self.notify_incoming_call(character, call_type)
+
     # ==================================================================
     # LLM capture — primary: message_added hook (JSON); fallback: HTML
     # ==================================================================
@@ -376,7 +429,6 @@ class PhoneWidget(QWidget):
         if not self._contact_store.is_contact(char_name):
             self._contact_store.add_contact(char_name)
         self._contact_store.touch_interaction(char_name)
-        (self._data_dir / "debug_route_in.txt").write_text(f"ROUTE: {char_name}={speech[:50]}", encoding="utf-8")
         # Auto-increment stagger for tool-based calls (default stagger_index=0)
         if stagger_index == 0:
             with self._sms_lock:
@@ -393,14 +445,80 @@ class PhoneWidget(QWidget):
         t.start()
 
     def _deliver_sms(self, char_name: str, speech: str):
-        (self._data_dir / "debug_deliver.txt").write_text(
-            f"DELIVER: {char_name}={speech[:60]}", encoding="utf-8")
         self._messages_app.add_received_message(char_name, speech, delay=True)
         self._save_messages()
         if self._is_in_chat_with(char_name):
             self._message_store.mark_all_read(char_name)
         self._update_badge()
         self._refresh_all()
+
+    # ── group chat (LLM-driven, thread-safe via signals) ──
+
+    def route_group_reply(self, group: str, sender: str, text: str, stagger_index: int = 0):
+        """Deliver one character's group message with a human-like staggered delay.
+
+        Successive replies in one batch are delivered strictly in call order
+        (accumulating delay), so characters answering each other stay coherent.
+        The batch resets when the player sends (``_on_group_sent``) or after a
+        >8s gap (fallback for story-driven messages with no player turn).
+        """
+        group = (group or "").strip()
+        sender = (sender or "").strip()
+        text = (text or "").strip()
+        if not group or not sender or not text:
+            return
+        if stagger_index == 0:
+            with self._sms_lock:
+                now = time.time()
+                if now - self._group_delay_time > 8.0:
+                    self._group_delay = 0.0
+                if self._group_delay <= 0.0:
+                    self._group_delay = random.uniform(0.6, 1.6)   # first reply of batch
+                else:
+                    self._group_delay += random.uniform(1.2, 2.6)  # strictly after previous
+                delay_sec = self._group_delay
+                self._group_delay_time = now
+        else:
+            delay_sec = (random.randint(600, 1800) + stagger_index * random.randint(1200, 2600)) / 1000.0
+        t = threading.Timer(delay_sec, lambda g=group, s=sender, tx=text: (
+            self._group_deliver_signal.emit(g, s, tx)))
+        t.daemon = True
+        t.start()
+
+    def _deliver_group(self, group: str, sender: str, text: str):
+        # A character may speak up who was not in the original member list.
+        if self._group_store.has_group(group) and sender not in self._group_store.get_members(group):
+            self._group_store.add_member(group, sender)
+        self._group_app.add_received_message(group, sender, text)
+
+    def create_group_from_llm(self, name: str, members: list[str]) -> str:
+        """Create a group at the story/LLM's request; returns the final group name."""
+        name = (name or "").strip()
+        if not name:
+            return ""
+        clean: list[str] = []
+        for m in members:
+            m = (m or "").strip()
+            if not m:
+                continue
+            clean.append(m)
+            if not self._contact_store.is_contact(m):
+                self._contact_store.add_contact(m)
+        gid = self._group_store.create_group(name, clean)
+        if gid:
+            self._group_refresh_signal.emit()
+        return gid
+
+    def _on_group_refresh(self):
+        """GUI-thread slot: refresh contact lists + group list after an LLM-created group."""
+        self.load_contacts()
+        self._group_app.refresh_list()
+
+    def _on_group_sent(self):
+        """Player sent a group message — start a fresh reply batch (reset stagger)."""
+        with self._sms_lock:
+            self._group_delay = 0.0
+            self._group_delay_time = 0.0
 
     def handle_display_words_changed(self, html_text: str):
         """Fallback: capture SMS replies from HTML display updates."""
@@ -577,7 +695,7 @@ class PhoneWidget(QWidget):
         for w in [self._home, self._messages_app, self._phone_app,
                    self._memos_app, self._browser_app, self._music_app,
                    self._settings_app, self._location_app, self._video_placeholder,
-                   self._group_placeholder, self._moments_placeholder]:
+                   self._group_app, self._moments_placeholder]:
             w.hide()
         self._home.show()
 
@@ -592,13 +710,15 @@ class PhoneWidget(QWidget):
             "settings": self._settings_app,
             "location": self._location_app,
             "video": self._video_placeholder,
-            "group": self._group_placeholder,
+            "group": self._group_app,
             "moments": self._moments_placeholder,
         }
         # "video" app → placeholder for now; "phone" → reset to voice mode
         if app_id == "phone":
             self._call_mode_preset = "voice"
             self._phone_app.set_video_mode(False)
+        elif app_id == "group":
+            self._group_app.refresh_list()
         for w in apps.values():
             w.hide()
         self._home.hide()
@@ -616,7 +736,6 @@ class PhoneWidget(QWidget):
 
     def _start_call(self, character: str, mode: str = "voice"):
         if not character or not character.strip():
-            (self._data_dir / "debug_call_fail.txt").write_text("EMPTY CHAR", encoding="utf-8")
             return
         # Honour preset from home screen app (video icon sets _call_mode_preset)
         if mode == "voice":
@@ -676,7 +795,6 @@ class PhoneWidget(QWidget):
                 self._submit_cb(f"[通话] {char}主动拨打了玩家的电话。{char}是拨打方。请只输出{char}的对话。")
 
     def _call_decline(self):
-        # (self._data_dir / "debug_call_flow.txt").write_text("DECLINE", encoding="utf-8")
         view = self._active_call_view()
         char = view.character()
         if self._state == _State.INCOMING_CALL:

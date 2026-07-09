@@ -77,6 +77,77 @@ def _classify_personality(character_setting: str) -> str:
     return "default"
 
 
+def _recent_story_context(max_lines: int = 8) -> str:
+    """Digest the most recent main-story dialogue from chat_history.
+
+    Returns a short "谁: 说了什么" transcript (player + characters + narration,
+    excluding internal markers) so a proactive SMS can stay coherent with the
+    plot. Empty string if no active session is found.
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    base = Path("data/chat_history")
+    if not base.is_dir():
+        return ""
+    try:
+        dirs = sorted((d for d in base.iterdir() if d.is_dir()),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+    except Exception:
+        return ""
+    _SKIP = {"COT", "PHONE", "CALL", "CHOICE", "STAT", "bgm", "CG"}
+    for d in dirs:
+        aj = d / "active.json"
+        if not aj.is_file():
+            continue
+        try:
+            data = json.loads(aj.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        msgs = data if isinstance(data, list) else data.get("messages", data.get("history", []))
+        if not isinstance(msgs, list):
+            return ""
+        lines: list[str] = []
+        for m in msgs[-14:]:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            content = m.get("content", "")
+            if not isinstance(content, str):
+                continue
+            if role == "user":
+                raw = content.strip()
+                # Skip phone-scene turns and tool directives — those aren't
+                # face-to-face story (SMS history is already passed separately).
+                if re.match(r'^\s*\[(短信|通话|视频|视频通话)\]', raw):
+                    continue
+                if "请调用" in raw or "send_sms" in raw:
+                    continue
+                txt = re.sub(r'^\s*\[[^\]]*\]\s*', '', raw).strip()
+                if txt:
+                    lines.append(f"玩家: {txt[:80]}")
+            elif role == "assistant":
+                idx = content.find("{")
+                if idx < 0:
+                    continue
+                try:
+                    dd = json.loads(content[idx:])
+                except Exception:
+                    continue
+                for it in dd.get("dialog", []):
+                    if not isinstance(it, dict):
+                        continue
+                    cn = str(it.get("character_name", "") or "").strip()
+                    sp = str(it.get("speech", "") or "").strip()
+                    if not cn or not sp or cn in _SKIP:
+                        continue
+                    label = "旁白" if cn in ("NARR", "旁白") else cn
+                    lines.append(f"{label}: {sp[:80]}")
+        return "\n".join(lines[-max_lines:])
+    return ""
+
+
 class ProactiveMonitor(QObject):
     """Periodic timer that may trigger SMS or call events from contacts.
 
@@ -103,8 +174,9 @@ class ProactiveMonitor(QObject):
         self._timer.timeout.connect(self._tick)
         self._character_settings: dict[str, str] = {}
         self._interval_ms = 120_000
-        self._scene_char: str = ""
+        self._scene_char: str = ""          # legacy single value (compat)
         self._scene_ts: float = 0
+        self._scene_chars: dict[str, float] = {}  # {name: last_seen_ts}
 
     # ------------------------------------------------------------------
     # public API
@@ -115,9 +187,18 @@ class ProactiveMonitor(QObject):
         self._character_settings = dict(settings)
 
     def set_scene_character(self, name: str) -> None:
-        """Mark the character currently active in the chat scene (skip proactive)."""
+        """Mark a character as currently face-to-face in the scene.
+
+        Tracks a *set* of recent scene characters (with timestamps) so that
+        multi-character scenes are all skipped for proactive SMS/calls, not just
+        the last speaker. Stale entries are pruned to keep the dict bounded.
+        """
+        now = time.time()
         self._scene_char = name
-        self._scene_ts = time.time()
+        self._scene_ts = now
+        self._scene_chars[name] = now
+        self._scene_chars = {n: ts for n, ts in self._scene_chars.items()
+                             if now - ts < 300}
 
     def start(self, interval_sec: float = 120.0) -> None:
         self._interval_ms = int(interval_sec * 1000)
@@ -149,16 +230,18 @@ class ProactiveMonitor(QObject):
         except Exception:
             valid_names = set(contacts)
         now = time.time()
-        # Don't bother characters who are currently in the scene (face-to-face)
-        scene_char = getattr(self, '_scene_char', '')
-        scene_ts = getattr(self, '_scene_ts', 0)
-        scene_active = scene_char and (now - scene_ts < 120)  # within 2 minutes
+        # Characters seen face-to-face in the last ~3 min — don't proactively
+        # text or call them; they're right next to the player, so it should be
+        # said in person (LLM handles the rare in-scene SMS via system prompt).
+        scene_recent = {
+            n for n, ts in getattr(self, '_scene_chars', {}).items()
+            if now - ts < 180
+        }
         for name in contacts:
             if name not in valid_names:
                 continue
-            if scene_active and name == scene_char:
-                continue  # same scene — don't call/text
-                continue
+            if name in scene_recent:
+                continue  # in-scene (face-to-face) — don't call/text
             last = self._contacts.last_interaction(name)
             idle_sec = now - last
             # Don't message if recently interacted (active chat in progress)
@@ -182,10 +265,11 @@ class ProactiveMonitor(QObject):
             self._urge[name] = urge
             # SMS: skip if already on a call with this character
             try:
-                from plugins.shinsekai_chat_phone.plugin import _phone_widget
-                if _phone_widget:
-                    call_char = getattr(_phone_widget, '_call_char', '')
-                    call_state = getattr(_phone_widget, '_state', None)
+                from plugins.shinsekai_chat_phone.plugin import get_phone_widget
+                w = get_phone_widget()
+                if w:
+                    call_char = getattr(w, '_call_char', '')
+                    call_state = getattr(w, '_state', None)
                     if call_state is not None:
                         sv = getattr(call_state, 'value', 0)
                         if sv in (3, 4, 5) and call_char == name:
@@ -210,21 +294,24 @@ class ProactiveMonitor(QObject):
                 self._contacts.touch_interaction(name)
 
     def _generate_message(self, name: str) -> str:
-        """LLM generates context-aware message based on relationship."""
+        """LLM generates a context-aware message from relationship + main story."""
         setting = self._character_settings.get(name, "")
         # Build SMS history context
         sms_hist = []
         for m in self._messages.get_messages(name)[-6:]:
             who = "对方" if m.get("is_user") else name
             sms_hist.append(f"{who}: {m.get('text','')}")
+        # Recent main-story dialogue, so the SMS follows the current plot
+        story = _recent_story_context()
         try:
             from plugins.shinsekai_chat_phone.sms_llm import _call_llm
             prompt = (
                 f"你(主动方)给对方发了一条短信，不是对方找你。"
-                f"根据你们之前的短信记录和你的性格，作为主动联系的一方，你会说什么？"
+                f"结合当前剧情最近发生的事、你们之前的短信记录和你的性格，"
+                f"作为主动联系的一方，你会发一条什么短信？"
                 f"只回复短信内容，不要加任何前缀、引号或格式。"
             )
-            result = _call_llm(name, setting, prompt, sms_hist)
+            result = _call_llm(name, setting, prompt, sms_hist, story_context=story)
             if result and len(result) > 2:
                 return result
         except Exception:

@@ -96,12 +96,17 @@ class MessagesApp(QWidget):
     def _show_list(self):
         self._view = "list"
         self._top_bar["title"].setText("短信")
-        self._top_bar["back"].show(); self._top_bar["action"].setText("")
+        self._top_bar["back"].show()
+        self._top_bar["action"].setText("👤")  # top-right entry → my name card
+        try:
+            self._top_bar["action"].clicked.disconnect()
+        except Exception:
+            pass
+        self._top_bar["action"].clicked.connect(self._show_profile)
         self._clear()
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         c = QWidget(); c.setStyleSheet(f"background: {get_surface()};")
         cl = QVBoxLayout(c); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
-        cl.addWidget(self._profile_card())  # my profile card at the top
         if not self._contacts:
             hint = QLabel("还没有短信\n在聊天中交换联系方式吧~")
             hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -127,29 +132,6 @@ class MessagesApp(QWidget):
                 cl.addWidget(row)
         cl.addStretch(); scroll.setWidget(c); self._stack.addWidget(scroll, 1)
 
-    def _profile_card(self) -> QWidget:
-        from plugins.shinsekai_chat_phone.settings_app import get_player_name, get_player_signature
-        name = get_player_name(); sig = get_player_signature()
-        card = QWidget(); card.setFixedHeight(74)
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setStyleSheet(f"background: {get_surface()}; border-bottom: 1px solid {OUTLINE_VARIANT};")
-        card.mousePressEvent = lambda e: self._show_profile()
-        rl = QHBoxLayout(card); rl.setContentsMargins(16, 12, 16, 12); rl.setSpacing(12)
-        rl.addWidget(self._bubble_avatar(True, 48))
-        tv = QVBoxLayout(); tv.setSpacing(3)
-        nlb = QLabel(name or "点击设置我的名片")
-        nlb.setStyleSheet(f"color: {ON_SURFACE}; font-size: 15px; font-weight: 600;")
-        tv.addWidget(nlb)
-        sub = sig or ("" if name else "设置头像、名字和个性签名")
-        if sub:
-            slb = QLabel(sub); slb.setMaximumWidth(170)
-            slb.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px;")
-            tv.addWidget(slb)
-        rl.addLayout(tv, 1)
-        arrow = QLabel("›"); arrow.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 20px;")
-        rl.addWidget(arrow)
-        return card
-
     def _show_profile(self):
         from plugins.shinsekai_chat_phone.settings_app import get_player_name, get_player_signature
         from plugins.shinsekai_chat_phone.styles import get_accent
@@ -161,8 +143,8 @@ class MessagesApp(QWidget):
         wl = QVBoxLayout(wrap); wl.setContentsMargins(16, 16, 16, 16); wl.setSpacing(10)
         wl.addWidget(self._bubble_avatar(True, 64), 0, Qt.AlignmentFlag.AlignHCenter)
         wl.addSpacing(4)
-        wl.addWidget(_field_label("名字"))
-        name_inp = QLineEdit(get_player_name()); name_inp.setPlaceholderText("你在手机里的名字")
+        wl.addWidget(_field_label("我的名字"))
+        name_inp = QLineEdit(get_player_name()); name_inp.setPlaceholderText("角色会这样称呼你（你在剧情里的名字）")
         name_inp.setStyleSheet(_INPUT_QSS)
         wl.addWidget(name_inp)
         wl.addWidget(_field_label("个性签名"))
@@ -245,6 +227,8 @@ class MessagesApp(QWidget):
     def _send(self, inp: QLineEdit):
         text = inp.text().strip()
         if not text or not self._character: return
+        from plugins.shinsekai_chat_phone import sound_fx as _sfx
+        _sfx.play(_sfx.SMS_SEND)
         self._msg_idx += 1
         self._own_messages.setdefault(self._character, []).append(
             {"text": text, "is_user": True, "idx": self._msg_idx})

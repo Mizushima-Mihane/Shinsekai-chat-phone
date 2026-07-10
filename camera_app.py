@@ -77,6 +77,8 @@ class CameraApp(QWidget):
         screen = QApplication.primaryScreen()
         if screen is None:
             return
+        from plugins.shinsekai_chat_phone import sound_fx as _sfx
+        _sfx.play(_sfx.SHUTTER)
         self._pixmap = screen.grabWindow(0)
         scaled = self._pixmap.scaled(260, 350,
                                      Qt.AspectRatioMode.KeepAspectRatio,

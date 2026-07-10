@@ -400,7 +400,7 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
             # player (你 / 用户 / their profile name). Avoids mistaking "打给别人的电话".
             from plugins.shinsekai_chat_phone.settings_app import get_player_name
             _pname = get_player_name()
-            _player_tokens = ["你", "用户"] + ([_pname] if _pname else [])
+            _player_tokens = ["你", "用户", "玩家"] + ([_pname] if _pname else [])
             if any(t in narration for t in _player_tokens):
                 present = [c for c in char_settings if c in narration]
                 caller = present[0] if len(present) == 1 else ""

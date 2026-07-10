@@ -247,6 +247,7 @@ class PhoneApp(QWidget):
             dur = entry.get("duration", 0)
             ts = entry.get("timestamp", 0)
             ttype = entry.get("type", "outgoing")
+            is_missed = "missed" in ttype
             icon = "↗" if ttype in ("outgoing", "outgoing_video") else "↙"
             is_video = "video" in ttype
             video_indicator = " 📹" if is_video else ""
@@ -262,9 +263,12 @@ class PhoneApp(QWidget):
             tv = QVBoxLayout()
             tv.setSpacing(2)
             nl = QLabel(f"{icon} {name}{video_indicator}")
-            nl.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px;")
-            dl = QLabel(_fmt_dur(dur) if dur else "未接通")
-            dl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px;")
+            nl.setStyleSheet(f"color: {'#FF3B30' if is_missed else ON_SURFACE}; font-size: 14px;")
+            if is_missed:
+                dl = QLabel("未接来电"); dl.setStyleSheet("color: #FF3B30; font-size: 11px;")
+            else:
+                dl = QLabel(_fmt_dur(dur) if dur else "未接通")
+                dl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px;")
             tv.addWidget(nl)
             tv.addWidget(dl)
             rl.addLayout(tv, 1)

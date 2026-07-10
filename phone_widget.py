@@ -32,12 +32,14 @@ from plugins.shinsekai_chat_phone.styles import PHONE_QSS, _darken
 from plugins.shinsekai_chat_phone.voice_memo_app import VoiceMemosApp
 from plugins.shinsekai_chat_phone.group_store import GroupStore
 from plugins.shinsekai_chat_phone.group_chat_app import GroupChatApp
+from plugins.shinsekai_chat_phone import sound_fx as _sfx
 
 _logger = logging.getLogger("chat_phone.widget")
 
 ICON_W, ICON_H = 44, 44
 PHONE_W, PHONE_H = 280, 500
 PHONE_MARGIN = 10
+RING_TIMEOUT_MS = 25000  # unanswered incoming call auto-misses after ~25s of ringing
 
 # Dialog markers / narration that must never become a call / SMS / group participant.
 _RESERVED_NAMES = {"旁白", "NARR", "CALL", "COT", "CHOICE", "STAT", "PHONE", "bgm", "CG"}
@@ -391,7 +393,12 @@ class PhoneWidget(QWidget):
         view = self._active_call_view()
         view.show_incoming(character)
         self._apply_state(_State.INCOMING_CALL)
-        self._shake_loop()
+        _sfx.play(_sfx.RINGTONE, loop=True, key="ring")
+        self._ring_vibrate()
+        # Auto-miss: stop ringing and log a missed call if left unanswered.
+        self._incoming_seq = getattr(self, "_incoming_seq", 0) + 1
+        _seq = self._incoming_seq
+        QTimer.singleShot(RING_TIMEOUT_MS, lambda: self._incoming_timeout(_seq))
 
     def _on_incoming_call(self, character: str, call_type: str = "voice"):
         """Slot for proactive monitor's incoming_call signal."""
@@ -765,6 +772,11 @@ class PhoneWidget(QWidget):
 
     def _apply_state(self, st: _State):
         self._state = st
+        # stop looping call cues when leaving their state
+        if st != _State.INCOMING_CALL:
+            _sfx.stop("ring")
+        if st != _State.CALLING:
+            _sfx.stop("dial")
         expanded = st != _State.COLLAPSED
         self._frame.setVisible(expanded)
         if st in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL):
@@ -865,6 +877,8 @@ class PhoneWidget(QWidget):
         view = self._active_call_view()
         view.show_calling(character)
         self._apply_state(_State.CALLING)
+        _sfx.play(_sfx.DIAL)  # dialing cue (one-shot)
+        _sfx.play(_sfx.BUSY, loop=True, key="dial")  # ring-back while awaiting answer
         if self._submit_cb is not None:
             if mode == "video":
                 prompt = f"[视频通话] 玩家主动拨打了{character}的视频电话。{character}是接听方。请只输出{character}的对话。"
@@ -901,10 +915,13 @@ class PhoneWidget(QWidget):
         self._apply_state(_State.IN_CALL)
         self._contact_store.touch_interaction(char)
         if self._submit_cb is not None:
-            if self._call_mode == "video":
-                self._submit_cb(f"[视频通话] {char}主动拨打了玩家的视频电话。{char}是拨打方。请只输出{char}的对话。")
-            else:
-                self._submit_cb(f"[通话] {char}主动拨打了玩家的电话。{char}是拨打方。请只输出{char}的对话。")
+            _kind = "视频通话" if self._call_mode == "video" else "通话"
+            self._submit_cb(
+                f"[{_kind}] {char}主动打给玩家，玩家接听了。这通电话是{char}自己发起的——"
+                f"请{char}结合当前剧情、近况和你们之间的关系，主动开口，带着自己的目的或心情"
+                f"引出话题、推进剧情（是{char}此刻有话想对玩家说、主动联系，"
+                f"不是玩家找{char}、也不是玩家让他打的），"
+                f"不要反问玩家「有什么事」「找我干嘛」。请只输出{char}的对话。")
 
     def _call_decline(self):
         view = self._active_call_view()
@@ -912,6 +929,10 @@ class PhoneWidget(QWidget):
         if self._state == _State.INCOMING_CALL:
             self._message_store.add_message(
                 char, "未接来电", is_user=False, msg_type="call_missed")
+            # also record it in the phone's call log (recents) — rendered red as 未接来电
+            if char:
+                self._phone_app.log_call(
+                    char, 0, "missed_video" if self._call_mode == "video" else "missed")
             self._update_badge()
             self._refresh_all()
         self._restore_after_call()
@@ -1072,12 +1093,14 @@ class PhoneWidget(QWidget):
         self._call_char = ''
         self._call_mode = "voice"
         self._yandere_breakdown_locked = False
+        _sfx.play(_sfx.HANGUP)
         self._restore_after_call()
 
     def end_call_from_character(self, char_name: str) -> None:
         """Character hung up on the user — end call from their side."""
         if self._state not in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL):
             return
+        _sfx.play(_sfx.HANGUP)
         duration = int(time.time() - self._call_start) if self._call_start else 0
         call_type = getattr(self, '_call_type', 'incoming')
         if self._call_mode == "video":
@@ -1135,12 +1158,27 @@ class PhoneWidget(QWidget):
         self._messages_app.refresh(names, unread, previews)
         self._phone_app.refresh_contacts(names)
 
-    def _shake_loop(self):
-        """Keep shaking while in incoming call state."""
+    def _ring_vibrate(self):
+        """Buzzy incoming-call vibration — rapid pulses (brrt … brrt) while ringing,
+        matching the ringtone. Louder/faster than the gentle new-SMS shake."""
         if self._state != _State.INCOMING_CALL:
             return
-        self._shake()
-        QTimer.singleShot(800, self._shake_loop)
+        orig = self.pos()
+        g = QSequentialAnimationGroup(self)
+        amp = 7
+        prev = orig
+        for dx in (-amp, amp, -amp, amp, -amp, amp, -3, 0):  # fast buzz, settle to rest
+            target = orig + QPoint(dx, 0)
+            g.addAnimation(_a(self, prev, target, 38, QEasingCurve.Type.Linear))
+            prev = target
+        g.finished.connect(g.deleteLater)
+        g.start()
+        QTimer.singleShot(1050, self._ring_vibrate)  # buzz ~0.3s, pause ~0.75s, repeat
+
+    def _incoming_timeout(self, seq: int):
+        """Ringing went unanswered long enough — treat it as a missed call."""
+        if self._state == _State.INCOMING_CALL and getattr(self, "_incoming_seq", 0) == seq:
+            self._call_decline()  # logs 未接来电 (message + red call-log entry) + restores
 
     def _shake(self):
         orig = self.pos()

@@ -68,6 +68,23 @@ def save_settings(data: dict) -> None:
     _CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# ── Player profile (global identity: name + signature) ─────────────────
+
+def get_player_name() -> str:
+    return str(load_settings().get("player_name", "") or "").strip()
+
+
+def get_player_signature() -> str:
+    return str(load_settings().get("player_signature", "") or "").strip()
+
+
+def set_player_profile(name: str, signature: str = "") -> None:
+    data = load_settings()
+    data["player_name"] = (name or "").strip()
+    data["player_signature"] = (signature or "").strip()
+    save_settings(data)
+
+
 def is_dnd() -> bool:
     return _load_session().get("dnd", False)
 

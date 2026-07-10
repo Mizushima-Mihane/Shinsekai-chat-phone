@@ -87,6 +87,26 @@ class GroupStore:
                 return True
         return False
 
+    def rename_group(self, old: str, new: str) -> str:
+        """Rename a group (re-keys the store). Returns the final new name, or '' on failure."""
+        new = (new or "").strip()
+        if not new:
+            return ""
+        with self._lock:
+            if old not in self._groups:
+                return ""
+            if new == old:
+                return old
+            base, i = new, 2
+            while new in self._groups:  # avoid colliding with another group
+                new = f"{base}{i}"
+                i += 1
+            g = self._groups.pop(old)
+            g["name"] = new
+            self._groups[new] = g
+            self._save()
+        return new
+
     def get_group_names(self) -> list[str]:
         with self._lock:
             return list(self._groups.keys())
@@ -128,7 +148,8 @@ class GroupStore:
     # messages
     # ------------------------------------------------------------------
 
-    def add_message(self, name: str, sender: str, text: str, *, is_user: bool = False) -> None:
+    def add_message(self, name: str, sender: str, text: str, *, is_user: bool = False,
+                    is_system: bool = False) -> None:
         with self._lock:
             g = self._groups.get(name)
             if not g:
@@ -138,9 +159,14 @@ class GroupStore:
                 "sender": sender,
                 "text": text,
                 "is_user": is_user,
+                "is_system": is_system,
                 "idx": self._msg_idx,
             })
             self._save()
+
+    def add_system_message(self, name: str, text: str) -> None:
+        """Append a grey system notice (join / leave / rename / kick)."""
+        self.add_message(name, "", text, is_user=False, is_system=True)
 
     def get_messages(self, name: str) -> list[dict]:
         with self._lock:

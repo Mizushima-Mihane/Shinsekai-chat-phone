@@ -96,35 +96,103 @@ class MessagesApp(QWidget):
     def _show_list(self):
         self._view = "list"
         self._top_bar["title"].setText("短信")
-        self._top_bar["back"].hide(); self._top_bar["action"].setText("")
+        self._top_bar["back"].show(); self._top_bar["action"].setText("")
         self._clear()
-        if not self._contacts:
-            hint = QLabel("还没有短信\n在聊天中交换联系方式吧~")
-            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hint.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 13px;")
-            self._stack.addWidget(hint, 1)
-            return
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         c = QWidget(); c.setStyleSheet(f"background: {get_surface()};")
         cl = QVBoxLayout(c); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
-        for name in self._contacts:
-            row = QWidget(); row.setFixedHeight(64)
-            row.setCursor(Qt.CursorShape.PointingHandCursor)
-            row.mousePressEvent = self._make_tap(name)
-            rl = QHBoxLayout(row); rl.setContentsMargins(16, 10, 16, 10); rl.setSpacing(12)
-            rl.addWidget(self._avatar(name, 44))
-            tv = QVBoxLayout(); tv.setSpacing(2)
-            nlb = QLabel(name); nlb.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px; font-weight: 500;")
-            plb = QLabel(self._previews.get(name, ""))
-            plb.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px;"); plb.setMaximumWidth(150)
-            tv.addWidget(nlb); tv.addWidget(plb); rl.addLayout(tv, 1)
-            if self._unread.get(name, 0) > 0:
-                badge = QLabel(str(self._unread[name])); badge.setFixedSize(20, 20)
-                badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                badge.setStyleSheet("background: #FFB3BA; color: white; border-radius: 10px; font-size: 10px; font-weight: bold;")
-                rl.addWidget(badge)
-            cl.addWidget(row)
+        cl.addWidget(self._profile_card())  # my profile card at the top
+        if not self._contacts:
+            hint = QLabel("还没有短信\n在聊天中交换联系方式吧~")
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hint.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 13px; padding: 40px 0;")
+            cl.addWidget(hint)
+        else:
+            for name in self._contacts:
+                row = QWidget(); row.setFixedHeight(64)
+                row.setCursor(Qt.CursorShape.PointingHandCursor)
+                row.mousePressEvent = self._make_tap(name)
+                rl = QHBoxLayout(row); rl.setContentsMargins(16, 10, 16, 10); rl.setSpacing(12)
+                rl.addWidget(self._avatar(name, 44))
+                tv = QVBoxLayout(); tv.setSpacing(2)
+                nlb = QLabel(name); nlb.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px; font-weight: 500;")
+                plb = QLabel(self._previews.get(name, ""))
+                plb.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px;"); plb.setMaximumWidth(150)
+                tv.addWidget(nlb); tv.addWidget(plb); rl.addLayout(tv, 1)
+                if self._unread.get(name, 0) > 0:
+                    badge = QLabel(str(self._unread[name])); badge.setFixedSize(20, 20)
+                    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    badge.setStyleSheet("background: #FFB3BA; color: white; border-radius: 10px; font-size: 10px; font-weight: bold;")
+                    rl.addWidget(badge)
+                cl.addWidget(row)
         cl.addStretch(); scroll.setWidget(c); self._stack.addWidget(scroll, 1)
+
+    def _profile_card(self) -> QWidget:
+        from plugins.shinsekai_chat_phone.settings_app import get_player_name, get_player_signature
+        name = get_player_name(); sig = get_player_signature()
+        card = QWidget(); card.setFixedHeight(74)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setStyleSheet(f"background: {get_surface()}; border-bottom: 1px solid {OUTLINE_VARIANT};")
+        card.mousePressEvent = lambda e: self._show_profile()
+        rl = QHBoxLayout(card); rl.setContentsMargins(16, 12, 16, 12); rl.setSpacing(12)
+        rl.addWidget(self._bubble_avatar(True, 48))
+        tv = QVBoxLayout(); tv.setSpacing(3)
+        nlb = QLabel(name or "点击设置我的名片")
+        nlb.setStyleSheet(f"color: {ON_SURFACE}; font-size: 15px; font-weight: 600;")
+        tv.addWidget(nlb)
+        sub = sig or ("" if name else "设置头像、名字和个性签名")
+        if sub:
+            slb = QLabel(sub); slb.setMaximumWidth(170)
+            slb.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px;")
+            tv.addWidget(slb)
+        rl.addLayout(tv, 1)
+        arrow = QLabel("›"); arrow.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 20px;")
+        rl.addWidget(arrow)
+        return card
+
+    def _show_profile(self):
+        from plugins.shinsekai_chat_phone.settings_app import get_player_name, get_player_signature
+        from plugins.shinsekai_chat_phone.styles import get_accent
+        self._view = "profile"
+        self._top_bar["title"].setText("我的名片")
+        self._top_bar["back"].show(); self._top_bar["action"].setText("")
+        self._clear()
+        wrap = QWidget(); wrap.setStyleSheet(f"background: {get_surface()};")
+        wl = QVBoxLayout(wrap); wl.setContentsMargins(16, 16, 16, 16); wl.setSpacing(10)
+        wl.addWidget(self._bubble_avatar(True, 64), 0, Qt.AlignmentFlag.AlignHCenter)
+        wl.addSpacing(4)
+        wl.addWidget(_field_label("名字"))
+        name_inp = QLineEdit(get_player_name()); name_inp.setPlaceholderText("你在手机里的名字")
+        name_inp.setStyleSheet(_INPUT_QSS)
+        wl.addWidget(name_inp)
+        wl.addWidget(_field_label("个性签名"))
+        sig_inp = QLineEdit(get_player_signature()); sig_inp.setPlaceholderText("一句话介绍自己~")
+        sig_inp.setStyleSheet(_INPUT_QSS)
+        wl.addWidget(sig_inp)
+        hint = QLabel("头像在「设置」里更换")
+        hint.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px;")
+        wl.addWidget(hint)
+        save = QPushButton("保存")
+        save.setStyleSheet(
+            f"QPushButton {{ background: {get_accent()}; color: white; border-radius: 12px;"
+            " padding: 9px; font-size: 14px; font-weight: 600; border: none; }")
+        save.clicked.connect(lambda: self._save_profile(name_inp.text(), sig_inp.text()))
+        wl.addWidget(save); wl.addStretch()
+        self._stack.addWidget(wrap, 1)
+
+    def _save_profile(self, name: str, sig: str):
+        from plugins.shinsekai_chat_phone.settings_app import get_player_signature, set_player_profile
+        old_sig = get_player_signature()
+        set_player_profile(name, sig)
+        new_sig = (sig or "").strip()
+        # Signature changed → let some contacts notice & react (LLM decides who, if any).
+        if new_sig and new_sig != old_sig and self._submit_cb is not None:
+            self._submit_cb(
+                f"[个性签名] 玩家把手机个性签名改成了「{new_sig}」（联系人都能看到）。"
+                f"请根据角色性格与关系自主演绎——有的联系人可能注意到并用 send_sms 私聊玩家，"
+                f"有的可能毫不在意；是否反应、谁反应、如何反应完全由你定，不必每个角色都反应。"
+                f"不要输出常规对话。")
+        self._show_list()
 
     def _make_tap(self, name: str):
         def handler(event):
@@ -232,7 +300,7 @@ class MessagesApp(QWidget):
             if w: w.deleteLater()
 
     def _on_back(self):
-        if self._view == "chat": self._show_list()
+        if self._view in ("chat", "profile"): self._show_list()
         else: self.on_back.emit()
 
     def _rounded_pixmap_label(self, pix, size):
@@ -270,6 +338,18 @@ class MessagesApp(QWidget):
         av = QLabel("我"); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
         av.setStyleSheet(f"background: {get_accent()}; border-radius: {size // 4}px; color: white; font-size: {int(size * 0.42)}px; font-weight: bold;")
         return av
+
+
+_INPUT_QSS = (
+    f"QLineEdit {{ background: {OUTLINE_VARIANT}; color: {ON_SURFACE}; border: none;"
+    " border-radius: 10px; padding: 9px 12px; font-size: 14px; }"
+    "QLineEdit:focus { border: 1px solid #FFB3BA; }")
+
+
+def _field_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px; font-weight: 600;")
+    return lbl
 
 
 def _top_bar() -> dict:

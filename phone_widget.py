@@ -39,6 +39,9 @@ ICON_W, ICON_H = 44, 44
 PHONE_W, PHONE_H = 280, 500
 PHONE_MARGIN = 10
 
+# Dialog markers / narration that must never become a call / SMS / group participant.
+_RESERVED_NAMES = {"旁白", "NARR", "CALL", "COT", "CHOICE", "STAT", "PHONE", "bgm", "CG"}
+
 
 def _data_dir() -> Path:
     """Phone data follows chat history — find the latest active session."""
@@ -73,6 +76,7 @@ class PhoneWidget(QWidget):
     _incoming_call_signal = Signal(str, str)  # (character, call_type) — thread-safe LLM-driven incoming call
     _group_deliver_signal = Signal(str, str, str)  # (group, sender, text) — thread-safe group delivery
     _group_refresh_signal = Signal()  # LLM created a group — refresh list on GUI thread
+    _group_event_signal = Signal(str, str, str)  # (action, group, arg) — membership/rename/removal → GUI
 
     def __init__(self, submit_cb: object, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -183,6 +187,7 @@ class PhoneWidget(QWidget):
         # ── home + apps ──
         self._home = HomeScreen(self._frame)
         self._home.app_launched.connect(self._launch_app)
+        self._home.minimize_requested.connect(lambda: self._apply_state(_State.COLLAPSED))
 
         self._messages_app = MessagesApp(self._message_store, self._frame)
         self._messages_app.set_submit_callback(self._submit_cb)
@@ -212,21 +217,15 @@ class PhoneWidget(QWidget):
         self._settings_app = SettingsApp(self._frame)
         self._settings_app.on_back.connect(self._go_home)
 
-        # Placeholder apps
-        from PySide6.QtWidgets import QLabel as _QLabel
-        self._location_app = _QLabel("定位功能开发中...", self._frame)
-        self._location_app.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._location_app.setStyleSheet("color: #8A7A7A; font-size: 14px;")
-        self._video_placeholder = _QLabel("视频功能开发中...", self._frame)
-        self._video_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._video_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+        # Placeholder apps — each with a back button so it isn't a dead end.
+        self._location_app = _placeholder_app("定位功能开发中...", self._go_home, self._frame)
+        self._video_placeholder = _placeholder_app("视频功能开发中...", self._go_home, self._frame)
         self._group_app = GroupChatApp(self._group_store, self._frame)
         self._group_app.on_back.connect(self._go_home)
         self._group_app.set_submit_callback(self._submit_cb)
         self._group_app.set_sent_callback(self._on_group_sent)
-        self._moments_placeholder = _QLabel("朋友圈功能开发中...", self._frame)
-        self._moments_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._moments_placeholder.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+        self._group_app.set_manage_callback(self._on_player_manage)
+        self._moments_placeholder = _placeholder_app("朋友圈功能开发中...", self._go_home, self._frame)
 
         # Rounded corner mask for call views (matches phone frame 28px radius)
         call_mask_path = QPainterPath()
@@ -263,6 +262,7 @@ class PhoneWidget(QWidget):
         self._incoming_call_signal.connect(self._on_llm_incoming_call)
         self._group_deliver_signal.connect(self._deliver_group)
         self._group_refresh_signal.connect(self._on_group_refresh)
+        self._group_event_signal.connect(self._on_group_event)
 
         # ── load saved messages ──
         self._load_messages()
@@ -374,6 +374,8 @@ class PhoneWidget(QWidget):
             pass
 
     def notify_incoming_call(self, character: str, call_type: str = "voice"):
+        if (character or "").strip() in _RESERVED_NAMES:
+            return  # narration / dialog markers are never callers
         if self._state == _State.IN_CALL:
             return
         # DND: log as missed, don't ring
@@ -424,7 +426,7 @@ class PhoneWidget(QWidget):
         """Store SMS reply — works even during calls (thread-safe)."""
         char_name = (char_name or "").strip()
         speech = (speech or "").strip()
-        if not char_name or not speech:
+        if not char_name or not speech or char_name in _RESERVED_NAMES:
             return
         if not self._contact_store.is_contact(char_name):
             self._contact_store.add_contact(char_name)
@@ -465,7 +467,7 @@ class PhoneWidget(QWidget):
         group = (group or "").strip()
         sender = (sender or "").strip()
         text = (text or "").strip()
-        if not group or not sender or not text:
+        if not group or not sender or not text or sender in _RESERVED_NAMES:
             return
         if stagger_index == 0:
             with self._sms_lock:
@@ -486,9 +488,10 @@ class PhoneWidget(QWidget):
         t.start()
 
     def _deliver_group(self, group: str, sender: str, text: str):
-        # A character may speak up who was not in the original member list.
-        if self._group_store.has_group(group) and sender not in self._group_store.get_members(group):
-            self._group_store.add_member(group, sender)
+        # Only current members can post to a group — a removed/never-added
+        # character's message is dropped (membership is authoritative).
+        if not self._group_store.has_group(group) or sender not in self._group_store.get_members(group):
+            return
         self._group_app.add_received_message(group, sender, text)
 
     def create_group_from_llm(self, name: str, members: list[str]) -> str:
@@ -519,6 +522,116 @@ class PhoneWidget(QWidget):
         with self._sms_lock:
             self._group_delay = 0.0
             self._group_delay_time = 0.0
+
+    # ── group membership / rename (player UI + LLM tools; thread-safe) ──
+
+    def _notify_group_event(self, text: str):
+        """Queue a neutral event notification to the LLM (drives next-turn reactions)."""
+        if self._submit_cb is not None and text:
+            self._submit_cb(text)  # type: ignore[operator]
+
+    def group_add_member(self, group: str, member: str, actor: str = "") -> bool:
+        group = (group or "").strip(); member = (member or "").strip(); actor = (actor or "").strip()
+        if not group or not member or member in _RESERVED_NAMES or not self._group_store.has_group(group):
+            return False
+        if member in self._group_store.get_members(group):
+            return False
+        if not self._contact_store.is_contact(member):
+            self._contact_store.add_contact(member)
+        self._group_store.add_member(group, member)
+        self._group_store.add_system_message(
+            group, f"{actor}把「{member}」拉进了群聊" if actor else f"「{member}」加入了群聊")
+        mstr = "、".join(self._group_store.get_members(group))
+        self._notify_group_event(
+            f"[群聊] {actor or '有人'}把「{member}」拉进了群「{group}」（当前成员：{mstr}）。"
+            f"请根据角色性格与当前剧情，自主演绎相关角色的反应。")
+        self._group_event_signal.emit("changed", group, "")
+        return True
+
+    def group_remove_member(self, group: str, member: str, actor: str = "") -> bool:
+        group = (group or "").strip(); member = (member or "").strip(); actor = (actor or "").strip()
+        if not group or not member or not self._group_store.has_group(group):
+            return False
+        if member not in self._group_store.get_members(group):
+            return False
+        self._group_store.remove_member(group, member)
+        self._group_store.add_system_message(
+            group, f"{actor}把「{member}」移出了群聊" if actor else f"「{member}」被移出了群聊")
+        self._notify_group_event(
+            f"[群聊] {actor or '有人'}把「{member}」移出了群「{group}」。"
+            f"请自主演绎接下来会发生什么（是否反应、如何反应完全由你定）。")
+        self._group_event_signal.emit("changed", group, "")
+        return True
+
+    def group_char_leave(self, group: str, member: str) -> bool:
+        group = (group or "").strip(); member = (member or "").strip()
+        if not group or not member or not self._group_store.has_group(group):
+            return False
+        if member not in self._group_store.get_members(group):
+            return False
+        self._group_store.remove_member(group, member)
+        self._group_store.add_system_message(group, f"「{member}」退出了群聊")
+        self._notify_group_event(
+            f"[群聊] 「{member}」退出了群「{group}」。请自主演绎群里其他成员的反应。")
+        self._group_event_signal.emit("changed", group, "")
+        return True
+
+    def group_rename(self, group: str, new_name: str, actor: str = "") -> str:
+        group = (group or "").strip(); new_name = (new_name or "").strip(); actor = (actor or "").strip()
+        if not group or not new_name or not self._group_store.has_group(group):
+            return ""
+        final = self._group_store.rename_group(group, new_name)
+        if not final or final == group:
+            return final
+        self._group_store.add_system_message(
+            final, f"{actor}把群名改为「{final}」" if actor else f"群名已改为「{final}」")
+        self._notify_group_event(
+            f"[群聊] {actor or '有人'}把群「{group}」改成了「{final}」。请自主演绎群里成员的反应。")
+        self._group_event_signal.emit("rename", group, final)
+        return final
+
+    def group_player_leave(self, group: str) -> bool:
+        group = (group or "").strip()
+        if not group or not self._group_store.has_group(group):
+            return False
+        self._notify_group_event(
+            f"[群聊] 你退出了群「{group}」。你已看不到群内消息，请自主演绎成员们后续的反应。")
+        self._group_store.delete_group(group)
+        self._group_event_signal.emit("gone", group, "")
+        return True
+
+    def group_dissolve(self, group: str) -> bool:
+        group = (group or "").strip()
+        if not group or not self._group_store.has_group(group):
+            return False
+        self._notify_group_event(
+            f"[群聊] 你解散了群「{group}」。请自主演绎成员们的反应。")
+        self._group_store.delete_group(group)
+        self._group_event_signal.emit("gone", group, "")
+        return True
+
+    def _on_player_manage(self, action: str, group: str, arg: str):
+        """Player-initiated group management from the manage view (actor = 你)."""
+        if action == "add":
+            self.group_add_member(group, arg, actor="你")
+        elif action == "remove":
+            self.group_remove_member(group, arg, actor="你")
+        elif action == "rename":
+            self.group_rename(group, arg, actor="你")
+        elif action == "leave":
+            self.group_player_leave(group)
+        elif action == "dissolve":
+            self.group_dissolve(group)
+
+    def _on_group_event(self, action: str, group: str, arg: str):
+        """GUI-thread slot: reflect a membership/rename/removal event in the group UI."""
+        if action == "rename":
+            self._group_app.on_group_renamed(group, arg)
+        elif action == "gone":
+            self._group_app.on_group_gone(group)
+        else:  # "changed"
+            self._group_app.on_group_changed(group)
+        self._group_app.refresh_list()
 
     def handle_display_words_changed(self, html_text: str):
         """Fallback: capture SMS replies from HTML display updates."""
@@ -619,6 +732,7 @@ class PhoneWidget(QWidget):
                 y = max(0, (ph - ICON_H) // 2) - 6
                 self.setGeometry(x, y, ICON_W, ICON_H + 10)
             self._toggle_btn.move(0, 6)
+            self._toggle_btn.show()
             self._badge.move(ICON_W - 16, 0)
             self._frame.hide()
             self._badge.raise_()
@@ -629,12 +743,10 @@ class PhoneWidget(QWidget):
                 self.setGeometry(x, y, PHONE_W, PHONE_H)
             self._frame.setGeometry(0, 0, PHONE_W, PHONE_H)
             self._frame.show()
-            # Toggle button floats at top-right of frame (hidden during calls)
-            in_call = self._state in (_State.CALLING, _State.INCOMING_CALL, _State.IN_CALL) or bool(self._call_char)
-            self._toggle_btn.setVisible(not in_call)
-            if not in_call:
-                self._toggle_btn.move(PHONE_W - ICON_W - 8, 8)
-                self._toggle_btn.raise_()
+            # Expanded: hide the floating 📱. Every app (and the placeholders) has
+            # its own back button now, and the home-screen home bar collapses the
+            # phone. The 📱 only shows while collapsed, as the launcher to open it.
+            self._toggle_btn.hide()
             self._badge.hide()
             self.raise_()
             QTimer.singleShot(100, self._re_raise)
@@ -1072,6 +1184,25 @@ class PhoneWidget(QWidget):
             except Exception:
                 pass
         self._yandere_overlays = []
+
+
+def _placeholder_app(text: str, on_back, parent) -> QWidget:
+    """A '...功能开发中' screen with a back button, so it isn't a navigation dead end."""
+    from PySide6.QtWidgets import QPushButton, QHBoxLayout
+    w = QWidget(parent)
+    lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+    tb = QWidget(); tb.setFixedHeight(48)
+    tl = QHBoxLayout(tb); tl.setContentsMargins(4, 0, 12, 0)
+    back = QPushButton("←")
+    back.setStyleSheet("QPushButton { background: transparent; color: #FFB3BA; border: none;"
+                       " font-size: 18px; padding: 6px 10px; font-weight: 600; }")
+    back.clicked.connect(on_back)
+    tl.addWidget(back); tl.addStretch()
+    lay.addWidget(tb)
+    lbl = QLabel(text); lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setStyleSheet("color: #8A7A7A; font-size: 14px;")
+    lay.addWidget(lbl, 1)
+    return w
 
 
 def _a(w, s, e, ms, curve):

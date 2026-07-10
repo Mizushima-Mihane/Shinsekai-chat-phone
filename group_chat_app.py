@@ -23,10 +23,11 @@ class GroupChatApp(QWidget):
         super().__init__(parent)
         self._store = store
         self._group = ""                 # currently open group name
-        self._view = "list"              # "list" | "chat" | "create"
+        self._view = "list"              # "list" | "chat" | "create" | "manage"
         self._submit_cb: object = None
         self._save_cb: object = None
         self._sent_cb: object = None
+        self._manage_cb: object = None
         self._contacts: list[str] = []
         self._msg_layout: QVBoxLayout | None = None
         self._scroll: QScrollArea | None = None
@@ -37,6 +38,7 @@ class GroupChatApp(QWidget):
     def set_submit_callback(self, cb): self._submit_cb = cb
     def set_save_callback(self, cb): self._save_cb = cb
     def set_sent_callback(self, cb): self._sent_cb = cb
+    def set_manage_callback(self, cb): self._manage_cb = cb
 
     def set_contacts(self, names):
         self._contacts = list(names)
@@ -77,7 +79,9 @@ class GroupChatApp(QWidget):
             if w: w.deleteLater()
 
     def _on_back(self):
-        if self._view in ("chat", "create"):
+        if self._view == "manage":
+            self._show_chat(self._group)
+        elif self._view in ("chat", "create"):
             self._show_list()
         else:
             self.on_back.emit()
@@ -135,6 +139,30 @@ class GroupChatApp(QWidget):
             self._show_list()
 
     # ------------------------------------------------------------------
+    # public API for phone_widget (membership / rename / removal events)
+    # ------------------------------------------------------------------
+
+    def on_group_changed(self, group: str):
+        """A membership event happened — re-render if we're viewing that group."""
+        if group == self._group and self._view == "chat":
+            self._show_chat(group)
+        elif group == self._group and self._view == "manage":
+            self._show_manage()
+
+    def on_group_renamed(self, old: str, new: str):
+        if old == self._group:
+            self._group = new
+            if self._view == "chat":
+                self._show_chat(new)
+            elif self._view == "manage":
+                self._show_manage()
+
+    def on_group_gone(self, group: str):
+        """Group removed from the phone (player left / dissolved) — bail to the list."""
+        if group == self._group:
+            self._show_list()
+
+    # ------------------------------------------------------------------
     # create group
     # ------------------------------------------------------------------
 
@@ -182,6 +210,119 @@ class GroupChatApp(QWidget):
             self._show_chat(gid)
 
     # ------------------------------------------------------------------
+    # manage group (rename / add / remove members / leave / dissolve)
+    # ------------------------------------------------------------------
+
+    def _show_manage(self):
+        if not self._group or not self._store.has_group(self._group):
+            self._show_list(); return
+        self._view = "manage"
+        name = self._group
+        members = self._store.get_members(name)
+        self._top["title"].setText("群设置")
+        self._top["back"].show(); self._top["action"].setText("")
+        self._clear()
+        from plugins.shinsekai_chat_phone.styles import get_accent
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        wrap = QWidget(); wrap.setStyleSheet(f"background: {get_surface()};")
+        wl = QVBoxLayout(wrap); wl.setContentsMargins(16, 12, 16, 12); wl.setSpacing(8)
+
+        # -- group name (editable) --
+        wl.addWidget(_manage_label("群名称"))
+        name_row = QHBoxLayout(); name_row.setSpacing(6)
+        name_inp = QLineEdit(name)
+        name_inp.setStyleSheet(
+            f"QLineEdit {{ background: {OUTLINE_VARIANT}; color: {ON_SURFACE}; border: none;"
+            " border-radius: 10px; padding: 7px 12px; font-size: 13px; }"
+            "QLineEdit:focus { border: 1px solid #FFB3BA; }")
+        save_btn = QPushButton("保存")
+        save_btn.setStyleSheet(
+            f"QPushButton {{ background: {get_accent()}; color: white; border-radius: 10px;"
+            " padding: 7px 14px; font-size: 13px; font-weight: 600; border: none; }")
+        save_btn.clicked.connect(lambda: self._do_rename(name_inp.text()))
+        name_row.addWidget(name_inp, 1); name_row.addWidget(save_btn)
+        wl.addLayout(name_row)
+
+        # -- members --
+        wl.addWidget(_manage_label(f"成员（{len(members)}）"))
+        for m in members:
+            mrow = QHBoxLayout(); mrow.setSpacing(8)
+            mrow.addWidget(self._bubble_avatar(m, False, 28))
+            nm = QLabel(m); nm.setStyleSheet(f"color: {ON_SURFACE}; font-size: 13px;")
+            mrow.addWidget(nm, 1)
+            rm = QPushButton("移出")
+            rm.setStyleSheet(
+                "QPushButton { background: transparent; color: #FF6B6B; border: 1px solid #FF6B6B;"
+                " border-radius: 10px; padding: 3px 10px; font-size: 11px; }"
+                "QPushButton:pressed { background: #FFECEC; }")
+            rm.clicked.connect(lambda _=False, mem=m: self._do_remove_member(mem))
+            mrow.addWidget(rm)
+            wl.addLayout(mrow)
+
+        # -- add members (contacts not already in the group) --
+        addable = [c for c in self._contacts if c not in members]
+        if addable:
+            wl.addWidget(_manage_label("添加成员"))
+            add_checks: list[QCheckBox] = []
+            for c in addable:
+                cb = QCheckBox(c)
+                cb.setStyleSheet(f"QCheckBox {{ color: {ON_SURFACE}; font-size: 13px; padding: 3px; }}")
+                add_checks.append(cb); wl.addWidget(cb)
+            add_btn = QPushButton("＋ 添加所选")
+            add_btn.setStyleSheet(
+                f"QPushButton {{ background: {get_accent()}; color: white; border-radius: 10px;"
+                " padding: 7px; font-size: 13px; font-weight: 600; border: none; }")
+            add_btn.clicked.connect(lambda: self._do_add_members(add_checks))
+            wl.addWidget(add_btn)
+
+        wl.addSpacing(10)
+        # -- leave / dissolve --
+        leave_btn = QPushButton("退出群聊")
+        leave_btn.setStyleSheet(
+            "QPushButton { background: #FFE8D6; color: #C77D3C; border: none; border-radius: 12px;"
+            " padding: 9px; font-size: 13px; font-weight: 600; }"
+            "QPushButton:pressed { background: #FFD9BC; }")
+        leave_btn.clicked.connect(self._do_leave)
+        wl.addWidget(leave_btn)
+        dissolve_btn = QPushButton("解散群聊")
+        dissolve_btn.setStyleSheet(
+            "QPushButton { background: #FF6B6B; color: white; border: none; border-radius: 12px;"
+            " padding: 9px; font-size: 13px; font-weight: 600; }"
+            "QPushButton:pressed { background: #E04B4B; }")
+        dissolve_btn.clicked.connect(self._do_dissolve)
+        wl.addWidget(dissolve_btn)
+        wl.addStretch()
+        scroll.setWidget(wrap); self._stack.addWidget(scroll, 1)
+
+    def _do_rename(self, new: str):
+        new = (new or "").strip()
+        if not new or not self._group or new == self._group:
+            return
+        if self._manage_cb is not None:
+            self._manage_cb("rename", self._group, new)
+
+    def _do_remove_member(self, member: str):
+        if self._manage_cb is not None and self._group:
+            self._manage_cb("remove", self._group, member)
+
+    def _do_add_members(self, checks: list[QCheckBox]):
+        chosen = [cb.text() for cb in checks if cb.isChecked()]  # collect before any re-render
+        if not chosen or not self._group:
+            return
+        for m in chosen:
+            if self._manage_cb is not None:
+                self._manage_cb("add", self._group, m)
+
+    def _do_leave(self):
+        if self._manage_cb is not None and self._group:
+            self._manage_cb("leave", self._group, "")
+
+    def _do_dissolve(self):
+        if self._manage_cb is not None and self._group:
+            self._manage_cb("dissolve", self._group, "")
+
+    # ------------------------------------------------------------------
     # chat view
     # ------------------------------------------------------------------
 
@@ -189,7 +330,8 @@ class GroupChatApp(QWidget):
         self._view = "chat"; self._group = name
         members = self._store.get_members(name)
         self._top["title"].setText(f"{name}（{len(members)}）")
-        self._top["back"].show(); self._top["action"].setText("")
+        self._top["back"].show(); self._top["action"].setText("⋯")
+        self._reconnect(self._top["action"], self._show_manage)
         self._clear()
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -200,7 +342,10 @@ class GroupChatApp(QWidget):
         self._msg_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._msg_layout.setContentsMargins(4, 6, 4, 6); self._msg_layout.setSpacing(6)
         for m in self._store.get_messages(name):
-            self._add_bubble(m.get("sender", ""), m.get("text", ""), m.get("is_user", False))
+            if m.get("is_system"):
+                self._add_system_bubble(m.get("text", ""))
+            else:
+                self._add_bubble(m.get("sender", ""), m.get("text", ""), m.get("is_user", False))
         self._msg_layout.addStretch(); scroll.setWidget(mc)
         self._scroll = scroll; QTimer.singleShot(400, self._scroll_down)
 
@@ -282,6 +427,16 @@ class GroupChatApp(QWidget):
             wl.addStretch(1)
         self._msg_layout.addWidget(wrapper)
 
+    def _add_system_bubble(self, text: str):
+        """Centered grey system notice (join / leave / rename / kick)."""
+        if self._msg_layout is None:
+            return
+        lbl = QLabel(text); lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setMaximumWidth(220)
+        lbl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 10px; padding: 3px 8px;")
+        self._msg_layout.addWidget(lbl, 0, Qt.AlignmentFlag.AlignHCenter)
+
     def _bubble_avatar(self, sender: str, is_user: bool, size: int = 30):
         from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
         key = "__player__" if is_user else sender
@@ -324,6 +479,12 @@ class GroupChatApp(QWidget):
         av = QLabel("群"); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
         av.setStyleSheet(f"background: {get_accent()}; border-radius: {size // 4}px; color: white; font-size: {size // 2}px; font-weight: bold;")
         return av
+
+
+def _manage_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 11px; font-weight: 600; padding-top: 4px;")
+    return lbl
 
 
 def _top_bar() -> dict:

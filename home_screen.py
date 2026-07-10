@@ -35,6 +35,7 @@ ACCENT_MOMENTS  = "#D4B8D9"  # light purple
 
 class HomeScreen(QWidget):
     app_launched = Signal(str)
+    minimize_requested = Signal()  # user tapped the home bar to collapse the phone
 
     APPS = [
         # (app_id, label, emoji_or_text, color, font_size, icon_path, icon_scale)
@@ -113,10 +114,18 @@ class HomeScreen(QWidget):
         layout.addLayout(grid)
         layout.addStretch()
 
-        pill = QWidget()
-        pill.setFixedHeight(5)
-        pill.setStyleSheet(f"background: {OUTLINE_VARIANT}; border-radius: 3px; margin: 0 120px 8px 120px;")
-        layout.addWidget(pill)
+        # Home bar — tap to collapse the phone (swipe-up analog); enlarged hit area.
+        home_bar = QWidget()
+        home_bar.setFixedHeight(24)
+        home_bar.setCursor(Qt.CursorShape.PointingHandCursor)
+        home_bar.setToolTip("收起手机")
+        hb = QVBoxLayout(home_bar); hb.setContentsMargins(0, 6, 0, 8)
+        hb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pill = QWidget(); pill.setFixedSize(100, 5)
+        pill.setStyleSheet(f"background: {OUTLINE_VARIANT}; border-radius: 3px;")
+        hb.addWidget(pill, 0, Qt.AlignmentFlag.AlignCenter)
+        home_bar.mousePressEvent = lambda e: self.minimize_requested.emit()
+        layout.addWidget(home_bar)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(lambda: self._time_label.setText(_fmt_time()))

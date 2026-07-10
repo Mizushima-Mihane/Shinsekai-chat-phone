@@ -131,6 +131,72 @@ def create_group(group_name: str, members: str) -> str:
     return f"已创建群聊「{gid}」。" if gid else "建群失败。"
 
 
+# ── LLM tools: group membership / rename (角色可主动操作) ──────────────
+
+@tool(
+    name="add_group_member",
+    group="default",
+    description=(
+        "把某个角色拉进一个已存在的群聊。group_name是群名，character_name是被拉进来的角色，"
+        "operator_name是执行这个操作的角色名（谁拉的，可留空）。"
+        "只有当前群成员才能用 send_group_sms 发言——要让新角色在群里说话，必须先用本工具拉进来。"
+    ),
+)
+def add_group_member(group_name: str, character_name: str, operator_name: str = "") -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    ok = w.group_add_member(group_name, character_name, operator_name)
+    return "" if ok else f"无法把「{character_name}」加入群「{group_name}」（群不存在或已在群里）。"
+
+
+@tool(
+    name="remove_group_member",
+    group="default",
+    description=(
+        "把某个角色移出群聊。group_name是群名，character_name是被移出的角色，"
+        "operator_name是执行移出的角色名（谁踢的，可留空）。"
+    ),
+)
+def remove_group_member(group_name: str, character_name: str, operator_name: str = "") -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    ok = w.group_remove_member(group_name, character_name, operator_name)
+    return "" if ok else f"无法把「{character_name}」移出群「{group_name}」（群不存在或不在群里）。"
+
+
+@tool(
+    name="leave_group",
+    group="default",
+    description=(
+        "让某个角色主动退出群聊（他自己离开）。group_name是群名，character_name是退群的角色。"
+    ),
+)
+def leave_group(group_name: str, character_name: str) -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    ok = w.group_char_leave(group_name, character_name)
+    return "" if ok else f"「{character_name}」无法退出群「{group_name}」（群不存在或不在群里）。"
+
+
+@tool(
+    name="rename_group",
+    group="default",
+    description=(
+        "修改群聊名字。group_name是当前群名，new_name是新群名，"
+        "operator_name是执行改名的角色名（谁改的，可留空）。"
+    ),
+)
+def rename_group(group_name: str, new_name: str, operator_name: str = "") -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    final = w.group_rename(group_name, new_name, operator_name)
+    return "" if final else f"无法把群「{group_name}」改名（群不存在或新名无效）。"
+
+
 # ── LLM tool: bug character's phone ────────────────────────────────────
 
 @tool(
@@ -285,7 +351,7 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
         if name == "CALL":
             call_char = speech.split(":")[0].split("：")[0].strip()
             call_type = "video" if ("视频" in speech or "video" in speech.lower()) else "voice"
-            if call_char:
+            if call_char and call_char in char_settings:  # only a real character can call
                 w._incoming_call_signal.emit(call_char, call_type)
                 call_signaled = True
             continue
@@ -328,17 +394,24 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
     if not call_signaled and narration_parts:
         import re as _re3
         narration = " ".join(narration_parts)
-        if _re3.search(r'(拨通|拨打|拨了|打来|打了|打过)\s*(?:了|个)?\s*(电话|视频)', narration):
-            present = [c for c in char_settings if c in narration]
-            caller = present[0] if len(present) == 1 else ""
-            if not caller:
-                _mon = get_monitor()
-                caller = (getattr(_mon, "_scene_char", "") or "").strip() if _mon else ""
-            cur = getattr(w, "_state", None)
-            in_call = getattr(cur, "value", 0) in (3, 4, 5) if cur is not None else False
-            if caller and caller in char_settings and caller not in spoke_chars and not in_call:
-                call_type = "video" if "视频" in narration else "voice"
-                w._incoming_call_signal.emit(caller, call_type)
+        # Loosened: allow a few chars between the verb and 电话/视频 (e.g. 拨通了你的电话).
+        if _re3.search(r'(拨通|拨打|拨了|打来|打了|打过|打给)[^。！？!?\n]{0,8}(电话|视频)', narration):
+            # Only ring if the call is aimed at the PLAYER — narration references the
+            # player (你 / 用户 / their profile name). Avoids mistaking "打给别人的电话".
+            from plugins.shinsekai_chat_phone.settings_app import get_player_name
+            _pname = get_player_name()
+            _player_tokens = ["你", "用户"] + ([_pname] if _pname else [])
+            if any(t in narration for t in _player_tokens):
+                present = [c for c in char_settings if c in narration]
+                caller = present[0] if len(present) == 1 else ""
+                if not caller:
+                    _mon = get_monitor()
+                    caller = (getattr(_mon, "_scene_char", "") or "").strip() if _mon else ""
+                cur = getattr(w, "_state", None)
+                in_call = getattr(cur, "value", 0) in (3, 4, 5) if cur is not None else False
+                if caller and caller in char_settings and caller not in spoke_chars and not in_call:
+                    call_type = "video" if "视频" in narration else "voice"
+                    w._incoming_call_signal.emit(caller, call_type)
 
     # Strip COT + PHONE + CALL from stored dialog to save tokens
     if isinstance(data, dict) and "dialog" in data:
@@ -399,6 +472,21 @@ def _on_before_chat(ctx) -> None:
             "低头点开了你们的聊天框——随后用PHONE格式输出那条短信。"
             "◆ 若角色不在玩家身边（异地、分开状态）：可正常主动发短信或打电话。"
         )
+        # ── Player's chosen name (so characters can address them naturally) ──
+        try:
+            from plugins.shinsekai_chat_phone.settings_app import get_player_name as _gpn, get_player_signature as _gps
+            _pname = _gpn()
+            if _pname:
+                msg += (
+                    f" [玩家称呼] 玩家的名字是「{_pname}」。"
+                    f"你可以自然地称呼玩家为「{_pname}」或「你」，怎么顺口怎么来。")
+            _psig = _gps()
+            if _psig:
+                msg += (
+                    f" [玩家签名] 玩家手机的个性签名是「{_psig}」（联系人都能看到，"
+                    f"可作为了解玩家近况或心情的线索，酌情自然提及、不必刻意）。")
+        except Exception:
+            pass
         # ── Group chat protocol (dynamic: read the current groups) ──
         try:
             _wg = get_phone_widget()
@@ -423,6 +511,15 @@ def _on_before_chat(ctx) -> None:
             msg += (
                 " 若剧情中出现「把玩家拉进群」「角色们新建了一个群」等情节，"
                 "先调用 create_group(群名, 成员) 工具建群（成员名用、分隔），再让角色在群里发言。"
+                " [群聊成员变动] 群成员和群名可以动态变化，你可以主动演绎："
+                "① add_group_member(群名, 角色, 操作者) 把某角色拉进群——"
+                "注意只有当前群成员能用 send_group_sms 发言，要让新人在群里说话必须先拉进群；"
+                "② remove_group_member(群名, 角色, 操作者) 把某角色踢出群；"
+                "③ leave_group(群名, 角色) 让某角色主动退群；"
+                "④ rename_group(群名, 新群名, 操作者) 改群名。"
+                "（操作者=执行该动作的角色名，可留空。）"
+                "这些变动系统会自动记录、并在下一轮提示相关角色反应，你不必在同一轮硬凑反应——"
+                "如何反应、由谁反应、是否反应，全部根据角色性格与剧情自主演绎。"
             )
         except Exception:
             pass

@@ -28,6 +28,7 @@ class MessagesApp(QWidget):
         self._save_cb: object = None
         self._read_cb: object = None
         self._contacts: list[str] = []
+        self._unknown: set[str] = set()
         self._unread: dict[str, int] = {}
         self._previews: dict[str, str] = {}
         self._view = "list"
@@ -57,8 +58,9 @@ class MessagesApp(QWidget):
                 except Exception:
                     pass
 
-    def refresh(self, contacts, unread, previews):
+    def refresh(self, contacts, unread, previews, unknown=None):
         self._contacts, self._unread, self._previews = list(contacts), dict(unread), dict(previews)
+        self._unknown = set(unknown or [])
         if self._view == "list":
             self._show_list()
 
@@ -120,7 +122,7 @@ class MessagesApp(QWidget):
                 rl = QHBoxLayout(row); rl.setContentsMargins(16, 10, 16, 10); rl.setSpacing(12)
                 rl.addWidget(self._avatar(name, 44))
                 tv = QVBoxLayout(); tv.setSpacing(2)
-                nlb = QLabel(name); nlb.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px; font-weight: 500;")
+                nlb = QLabel(self._display_name(name)); nlb.setStyleSheet(f"color: {ON_SURFACE}; font-size: 14px; font-weight: 500;")
                 plb = QLabel(self._previews.get(name, ""))
                 plb.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px;"); plb.setMaximumWidth(150)
                 tv.addWidget(nlb); tv.addWidget(plb); rl.addLayout(tv, 1)
@@ -187,7 +189,7 @@ class MessagesApp(QWidget):
     # ── Chat view ──
     def _show_chat(self, name: str):
         self._view = "chat"; self._character = name
-        self._top_bar["title"].setText(name)
+        self._top_bar["title"].setText(self._display_name(name))
         self._top_bar["back"].show()
         self._top_bar["action"].setText("☏")
         self._top_bar["action"].clicked.disconnect()
@@ -298,7 +300,15 @@ class MessagesApp(QWidget):
         av.setPixmap(rounded)
         return av
 
+    def _display_name(self, name: str) -> str:
+        """Unknown (not-yet-exchanged) contacts show as「未知联系人」, hiding the real name."""
+        return "未知联系人" if name in self._unknown else name
+
     def _avatar(self, name, size):
+        if name in self._unknown:  # hide identity — unknown contact gets a ? chip
+            av = QLabel("?"); av.setFixedSize(size, size); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            av.setStyleSheet(f"background: {ON_SURFACE_VARIANT}; border-radius: {size // 4}px; color: white; font-size: {size // 2}px; font-weight: bold;")
+            return av
         from plugins.shinsekai_chat_phone.avatar_manager import get_avatar_for_character
         pix = get_avatar_for_character(name)
         if pix and not pix.isNull():

@@ -75,6 +75,7 @@ class GroupStore:
                 "name": name,
                 "members": [m for m in dict.fromkeys(members) if m],  # dedupe, keep order
                 "messages": [],
+                "unread": 0,
             }
             self._save()
         return name
@@ -183,3 +184,30 @@ class GroupStore:
             who = "我" if m.get("is_user") else m.get("sender", "")
             t = f"{who}: {m.get('text', '')}".replace("\n", " ")
             return t[: max_len - 1] + "…" if len(t) > max_len else t
+
+    # ------------------------------------------------------------------
+    # unread
+    # ------------------------------------------------------------------
+
+    def mark_unread(self, name: str) -> None:
+        with self._lock:
+            g = self._groups.get(name)
+            if g:
+                g["unread"] = int(g.get("unread", 0)) + 1
+                self._save()
+
+    def mark_read(self, name: str) -> None:
+        with self._lock:
+            g = self._groups.get(name)
+            if g and g.get("unread"):
+                g["unread"] = 0
+                self._save()
+
+    def get_unread(self, name: str) -> int:
+        with self._lock:
+            g = self._groups.get(name)
+            return int(g.get("unread", 0)) if g else 0
+
+    def total_unread(self) -> int:
+        with self._lock:
+            return sum(int(g.get("unread", 0)) for g in self._groups.values())

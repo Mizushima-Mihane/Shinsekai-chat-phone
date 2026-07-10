@@ -28,6 +28,7 @@ class GroupChatApp(QWidget):
         self._save_cb: object = None
         self._sent_cb: object = None
         self._manage_cb: object = None
+        self._read_cb: object = None
         self._contacts: list[str] = []
         self._msg_layout: QVBoxLayout | None = None
         self._scroll: QScrollArea | None = None
@@ -39,6 +40,7 @@ class GroupChatApp(QWidget):
     def set_save_callback(self, cb): self._save_cb = cb
     def set_sent_callback(self, cb): self._sent_cb = cb
     def set_manage_callback(self, cb): self._manage_cb = cb
+    def set_read_callback(self, cb): self._read_cb = cb
 
     def set_contacts(self, names):
         self._contacts = list(names)
@@ -121,6 +123,12 @@ class GroupChatApp(QWidget):
             preview.setStyleSheet(f"color: {ON_SURFACE_VARIANT}; font-size: 12px;")
             preview.setMaximumWidth(180)
             tv.addWidget(title); tv.addWidget(preview); rl.addLayout(tv, 1)
+            u = self._store.get_unread(name)
+            if u > 0:
+                b = QLabel(str(u) if u <= 99 else "99+"); b.setFixedSize(20, 20)
+                b.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                b.setStyleSheet("background: #FF3B30; color: white; border-radius: 10px; font-size: 10px; font-weight: bold;")
+                rl.addWidget(b)
             cl.addWidget(row)
         cl.addStretch(); scroll.setWidget(c); self._stack.addWidget(scroll, 1)
 
@@ -328,6 +336,9 @@ class GroupChatApp(QWidget):
 
     def _show_chat(self, name: str):
         self._view = "chat"; self._group = name
+        self._store.mark_read(name)  # opening a group clears its unread
+        if self._read_cb is not None:
+            self._read_cb()
         members = self._store.get_members(name)
         self._top["title"].setText(f"{name}（{len(members)}）")
         self._top["back"].show(); self._top["action"].setText("⋯")

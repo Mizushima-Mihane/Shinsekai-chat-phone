@@ -43,16 +43,31 @@ class ContactStore:
         with self._lock:
             return name in self._contacts
 
-    def add_contact(self, name: str) -> bool:
-        """Add a character as a contact.  Returns True if newly added."""
+    def is_known(self, name: str) -> bool:
+        """True if the contact formally exchanged (legacy contacts & non-contacts → True)."""
+        with self._lock:
+            entry = self._contacts.get(name)
+            return True if entry is None else bool(entry.get("known", True))
+
+    def add_contact(self, name: str, known: bool = True) -> bool:
+        """Add a character as a contact. Returns True if newly added or upgraded.
+
+        ``known=False`` records an *unknown contact* — a character who got the
+        player's number without formally exchanging (shown as「未知联系人」). Calling
+        again with ``known=True`` (e.g. exchange_contacts) upgrades it to known.
+        """
         if not name or not name.strip():
             return False
         with self._lock:
             if name in self._contacts:
-                return False
-            self._contacts[name] = {"added_at": _now()}
+                if known and not self._contacts[name].get("known", True):
+                    self._contacts[name]["known"] = True  # upgrade unknown → known
+                else:
+                    return False
+            else:
+                self._contacts[name] = {"added_at": _now(), "known": bool(known)}
         self._save()
-        logger.info("Contact added: %s", name)
+        logger.info("Contact added/updated: %s (known=%s)", name, known)
         return True
 
     def remove_contact(self, name: str) -> bool:

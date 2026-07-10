@@ -55,6 +55,8 @@ class HomeScreen(QWidget):
         super().__init__(parent)
         self._messages_icon: _MacaronIcon | None = None
         self._last_badge_count: int = -1
+        self._group_icon: _MacaronIcon | None = None
+        self._last_group_badge: int = -1
         self.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
@@ -110,6 +112,8 @@ class HomeScreen(QWidget):
             btn.clicked.connect(self._make_launch(app_id))
             if app_id == "messages":
                 self._messages_icon = btn
+            elif app_id == "group":
+                self._group_icon = btn
             grid.addWidget(btn, row, col)
         layout.addLayout(grid)
         layout.addStretch()
@@ -138,6 +142,14 @@ class HomeScreen(QWidget):
         self._last_badge_count = count
         if self._messages_icon is not None:
             self._messages_icon.set_badge(count)
+
+    def set_group_badge(self, count: int) -> None:
+        """Update unread badge on the 群聊 app icon (no-op if unchanged)."""
+        if count == self._last_group_badge:
+            return
+        self._last_group_badge = count
+        if self._group_icon is not None:
+            self._group_icon.set_badge(count)
 
     def _make_launch(self, app_id): return lambda: self.app_launched.emit(app_id)
 

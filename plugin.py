@@ -93,6 +93,26 @@ def send_sms(character_name: str, message: str) -> str:
     return ""
 
 
+# ── LLM tool: send SMS as an unknown/stranger number ──────────────────
+
+@tool(
+    name="send_sms_stranger",
+    group="default",
+    description=(
+        "以「未知联系人」身份给玩家发短信——当角色还没和玩家交换联系方式、"
+        "但剧情里他已通过某种途径（手段不限、可含非法方式，自行演绎）拿到玩家号码时用。"
+        "character_name是发信角色名，message是短信正文。玩家侧会显示为「未知联系人」、"
+        "真名隐藏，直到正式 exchange_contacts 才显示真名并升级为正常联系人。"
+    ),
+)
+def send_sms_stranger(character_name: str, message: str) -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    w.route_llm_reply(character_name, message, known=False)
+    return ""
+
+
 # ── LLM tool: send group SMS ────────────────────────────────────────
 
 @tool(
@@ -471,6 +491,10 @@ def _on_before_chat(ctx) -> None:
             "旁白示例：他耳根发红，移开目光不敢看你，轻咳一声晃了晃手机，"
             "低头点开了你们的聊天框——随后用PHONE格式输出那条短信。"
             "◆ 若角色不在玩家身边（异地、分开状态）：可正常主动发短信或打电话。"
+            " [未知联系人] 若角色还没和玩家交换联系方式（没做过 exchange_contacts），"
+            "但剧情里他通过某种手段（不限、可含非法方式，自行演绎）拿到了玩家号码，"
+            "可用 send_sms_stranger 给玩家发短信——玩家会看到「未知联系人」（不显示真名），"
+            "增添悬念；正式加好友仍用 exchange_contacts（届时升级为正常联系人、显示真名）。"
         )
         # ── Player's chosen name (so characters can address them naturally) ──
         try:

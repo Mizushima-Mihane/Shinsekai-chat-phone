@@ -227,6 +227,7 @@ class PhoneWidget(QWidget):
         self._group_app.set_submit_callback(self._submit_cb)
         self._group_app.set_sent_callback(self._on_group_sent)
         self._group_app.set_manage_callback(self._on_player_manage)
+        self._group_app.set_read_callback(self._update_group_badge)
         self._moments_placeholder = _placeholder_app("朋友圈功能开发中...", self._go_home, self._frame)
 
         # Rounded corner mask for call views (matches phone frame 28px radius)
@@ -320,11 +321,13 @@ class PhoneWidget(QWidget):
 
     def load_contacts(self):
         names = self._contact_store.get_contacts()
+        known = [n for n in names if self._contact_store.is_known(n)]
+        unknown = {n for n in names if not self._contact_store.is_known(n)}
         unread = self._message_store.unread_per_character()
         previews = {n: self._message_store.last_message_preview(n) for n in names}
-        self._messages_app.refresh(names, unread, previews)
-        self._phone_app.refresh_contacts(names)
-        self._group_app.set_contacts(names)
+        self._messages_app.refresh(names, unread, previews, unknown)
+        self._phone_app.refresh_contacts(known)   # strangers aren't dialable
+        self._group_app.set_contacts(known)       # nor addable to groups
 
     def add_contact(self, name: str) -> bool:
         if not name or not name.strip():
@@ -342,6 +345,21 @@ class PhoneWidget(QWidget):
             and self._messages_app._view == "chat"
             and self._messages_app._character == character
         )
+
+    def _is_viewing_group(self, group: str) -> bool:
+        """Check if we're currently viewing this group's chat in the Group app."""
+        return (
+            self._state != _State.COLLAPSED
+            and self._current_app == "group"
+            and self._group_app._view == "chat"
+            and self._group_app._group == group
+        )
+
+    def _update_group_badge(self):
+        """Refresh the 群聊 home-icon badge + floating badge from group unread."""
+        if getattr(self, "_home", None) is not None:
+            self._home.set_group_badge(self._group_store.total_unread())
+        self._update_badge()
 
     def notify_new_message(self, character: str, text: str):
         self._message_store.add_message(character, text, is_user=False)
@@ -429,14 +447,18 @@ class PhoneWidget(QWidget):
         self._sms_stagger = 0  # reset stagger for new conversation
         self._save_messages()
 
-    def route_llm_reply(self, char_name: str, speech: str, stagger_index: int = 0):
-        """Store SMS reply — works even during calls (thread-safe)."""
+    def route_llm_reply(self, char_name: str, speech: str, stagger_index: int = 0, known: bool = True):
+        """Store SMS reply — works even during calls (thread-safe).
+
+        ``known=False`` records the sender as an「未知联系人」(obtained the player's
+        number without formally exchanging contacts).
+        """
         char_name = (char_name or "").strip()
         speech = (speech or "").strip()
         if not char_name or not speech or char_name in _RESERVED_NAMES:
             return
         if not self._contact_store.is_contact(char_name):
-            self._contact_store.add_contact(char_name)
+            self._contact_store.add_contact(char_name, known=known)
         self._contact_store.touch_interaction(char_name)
         # Auto-increment stagger for tool-based calls (default stagger_index=0)
         if stagger_index == 0:
@@ -500,6 +522,14 @@ class PhoneWidget(QWidget):
         if not self._group_store.has_group(group) or sender not in self._group_store.get_members(group):
             return
         self._group_app.add_received_message(group, sender, text)
+        if self._is_viewing_group(group):
+            self._group_store.mark_read(group)
+        else:
+            self._group_store.mark_unread(group)
+            self._update_group_badge()
+            from plugins.shinsekai_chat_phone.settings_app import is_dnd
+            if not is_dnd():
+                self._shake()
 
     def create_group_from_llm(self, name: str, members: list[str]) -> str:
         """Create a group at the story/LLM's request; returns the final group name."""
@@ -1126,7 +1156,7 @@ class PhoneWidget(QWidget):
     # ── helpers ──
 
     def _update_badge(self):
-        total = self._message_store.total_unread()
+        total = self._message_store.total_unread() + self._group_store.total_unread()
         # Skip if unchanged — prevents redundant layout/repaint
         if total == self._last_badge_count:
             return
@@ -1153,10 +1183,12 @@ class PhoneWidget(QWidget):
     def _do_refresh(self):
         self._refresh_queued = False
         names = self._contact_store.get_contacts()
+        known = [n for n in names if self._contact_store.is_known(n)]
+        unknown = {n for n in names if not self._contact_store.is_known(n)}
         unread = self._message_store.unread_per_character()
         previews = {n: self._message_store.last_message_preview(n) for n in names}
-        self._messages_app.refresh(names, unread, previews)
-        self._phone_app.refresh_contacts(names)
+        self._messages_app.refresh(names, unread, previews, unknown)
+        self._phone_app.refresh_contacts(known)
 
     def _ring_vibrate(self):
         """Buzzy incoming-call vibration — rapid pulses (brrt … brrt) while ringing,

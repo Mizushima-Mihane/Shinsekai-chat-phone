@@ -46,17 +46,33 @@ _RESERVED_NAMES = {"旁白", "NARR", "CALL", "COT", "CHOICE", "STAT", "PHONE", "
 
 
 def _data_dir() -> Path:
-    """Phone data follows chat history — find the latest active session."""
+    """Phone data follows the CURRENT chat session.
+
+    首选本次启动的 ``--history`` 参数（当前会话的准确 hash）。这样即使新开局的
+    ``active.json`` 还没落盘（只有 ``active.json.tmp``、或尚未写入），也不会按 mtime
+    误选到别的存档目录——那正是「新开局把手机数据写进/重置了旧存档」的根因。
+    仅当拿不到 ``--history`` 时，才回退到「最新的、含 active.json(.tmp) 的目录」。
+    """
     base = Path("data/plugins/com.shinsekai.chat_phone")
-    # Try to find the current chat history hash
+    # 1) 首选：本次启动的 --history（当前会话）
+    import sys
+    for _a in sys.argv:
+        if _a.startswith("--history="):
+            _hp = _a.split("=", 1)[1].strip().strip('"').strip("'")
+            if _hp:
+                _p = Path(_hp)
+                _sess = _p if _p.suffix.lower() != ".json" else _p.parent
+                if _sess.name:
+                    return base / _sess.name
+            break
+    # 2) 回退：最新的、含 active.json 或 active.json.tmp 的 chat_history 目录
     ch_dir = Path("data/chat_history")
     if ch_dir.is_dir():
         dirs = sorted(ch_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
         for d in dirs:
-            if d.is_dir() and (d / "active.json").exists():
-                session = d.name
-                return base / session
-    # Fallback
+            if d.is_dir() and ((d / "active.json").exists() or (d / "active.json.tmp").exists()):
+                return base / d.name
+    # 3) 兜底
     d = base / "_default"
     d.mkdir(parents=True, exist_ok=True)
     return d

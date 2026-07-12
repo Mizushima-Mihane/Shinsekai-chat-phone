@@ -26,11 +26,16 @@ def send_sms_llm(character: str, character_setting: str, user_text: str,
 
 
 def _call_llm(character: str, setting: str, text: str, history: list[str],
-              story_context: str = "") -> str:
-    """Make a minimal LLM API call for SMS reply.
+              story_context: str = "", initiate: bool = False) -> str:
+    """Make a minimal LLM API call for an SMS.
 
     ``story_context`` (optional) is a short digest of the recent main-story
     dialogue, so the SMS can stay coherent with what just happened in the plot.
+
+    ``initiate=False`` (默认)：回复模式——把 ``text`` 当成对方发来的短信，让角色回复。
+    ``initiate=True``：主动发起模式——角色【主动】给对方发短信，``text`` 是对这条短信的
+    写作要求（而不是对方的来信）。用于开场未知短信/主动短信，避免生成出「你联系了我」这类
+    把玩家当成主动方的反向措辞。
     """
     from config.config_manager import ConfigManager
 
@@ -65,15 +70,27 @@ def _call_llm(character: str, setting: str, text: str, history: list[str],
             f"发短信时请自然地承接剧情——可以呼应刚才发生的事、当时的气氛或情绪。\n\n"
         )
 
-    system_prompt = (
-        f"你正在扮演{character}。以下是{character}的设定：\n{setting}\n\n"
-        f"{story_text}"
-        f"{hist_text}"
-        f"有人通过短信给{character}发了消息。"
-        f"请以{character}的身份结合上下文简短回复，一两句话即可。"
-        f"直接输出回复文字，不要加任何前缀后缀或格式。"
-    )
-    user_prompt = f"短信内容：{text}"
+    if initiate:
+        system_prompt = (
+            f"你正在扮演{character}。以下是{character}的设定：\n{setting}\n\n"
+            f"{story_text}"
+            f"{hist_text}"
+            f"你现在要【主动】给对方发一条手机短信——是你主动发起联系，不是对方来找你。"
+            f"请以{character}的身份，按下面的写作要求写这条短信，一两句话即可。"
+            f"注意视角：短信是【你发给对方】的，不要写成好像对方先联系了你。"
+            f"直接输出短信正文，不要加任何前缀后缀或格式。"
+        )
+        user_prompt = f"这条主动短信的写作要求：{text}"
+    else:
+        system_prompt = (
+            f"你正在扮演{character}。以下是{character}的设定：\n{setting}\n\n"
+            f"{story_text}"
+            f"{hist_text}"
+            f"有人通过短信给{character}发了消息。"
+            f"请以{character}的身份结合上下文简短回复，一两句话即可。"
+            f"直接输出回复文字，不要加任何前缀后缀或格式。"
+        )
+        user_prompt = f"短信内容：{text}"
 
     messages = [
         {"role": "system", "content": system_prompt},

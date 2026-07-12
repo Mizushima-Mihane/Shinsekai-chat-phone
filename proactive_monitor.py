@@ -186,19 +186,44 @@ class ProactiveMonitor(QObject):
         """Set {name: character_setting} map for personality classification."""
         self._character_settings = dict(settings)
 
-    def set_scene_character(self, name: str) -> None:
-        """Mark a character as currently face-to-face in the scene.
+    # 场景是「状态」不是「计时」：角色一旦当面在场，就一直算在场，直到 clear_scene()
+    # （转场/时间跳跃）或 remove_scene_character()（某人离开）显式释放。这里的时间戳只做
+    # 一个很长的安全兜底（防止漏检转场导致某角色被永久排除主动联系）。
+    _SCENE_BACKSTOP_SEC = 7200  # 2 小时
 
-        Tracks a *set* of recent scene characters (with timestamps) so that
-        multi-character scenes are all skipped for proactive SMS/calls, not just
-        the last speaker. Stale entries are pruned to keep the dict bounded.
+    def set_scene_character(self, name: str) -> None:
+        """标记某角色此刻与玩家当面同场（持续在场，直到显式转场/离开才释放）。
+
+        当面说话也算一次「互动」——同步刷新 last_interaction 作为辅助保护。
         """
+        name = (name or "").strip()
+        if not name:
+            return
         now = time.time()
         self._scene_char = name
         self._scene_ts = now
         self._scene_chars[name] = now
+        # 只按超长兜底剪枝，不按短时窗口——在场是状态，靠 clear/remove 释放。
         self._scene_chars = {n: ts for n, ts in self._scene_chars.items()
-                             if now - ts < 300}
+                             if now - ts < self._SCENE_BACKSTOP_SEC}
+        try:
+            self._contacts.touch_interaction(name)
+        except Exception:
+            pass
+
+    def clear_scene(self) -> None:
+        """转场 / 时间跳跃 —— 上一个场景结束，清空全部在场角色。"""
+        self._scene_char = ""
+        self._scene_chars = {}
+
+    def remove_scene_character(self, name: str) -> None:
+        """某角色离开当前场景 —— 单独移出在场集合（其余人仍在场）。"""
+        name = (name or "").strip()
+        if not name:
+            return
+        self._scene_chars.pop(name, None)
+        if self._scene_char == name:
+            self._scene_char = ""
 
     def start(self, interval_sec: float = 120.0) -> None:
         self._interval_ms = int(interval_sec * 1000)
@@ -230,32 +255,33 @@ class ProactiveMonitor(QObject):
         except Exception:
             valid_names = set(contacts)
         now = time.time()
-        # Characters seen face-to-face in the last ~3 min — don't proactively
-        # text or call them; they're right next to the player, so it should be
-        # said in person (LLM handles the rare in-scene SMS via system prompt).
+        # 在场（当面）角色 —— 主动监控绝不给他们发短信/打电话：人就在玩家旁边，有话当面说。
+        # 「在场」是状态：从当面说话起一直保持，直到 clear_scene()（转场）或 remove_scene_character()
+        # （离开）释放；这里只用超长兜底防漏检。剧情确实需要的在场短信由主 LLM 判断，不走这里。
         scene_recent = {
             n for n, ts in getattr(self, '_scene_chars', {}).items()
-            if now - ts < 180
+            if now - ts < self._SCENE_BACKSTOP_SEC
         }
         for name in contacts:
             if name not in valid_names:
                 continue
             if name in scene_recent:
                 continue  # in-scene (face-to-face) — don't call/text
-            last = self._contacts.last_interaction(name)
-            idle_sec = now - last
-            # Don't message if recently interacted (active chat in progress)
-            if idle_sec < 300:  # 5 minutes
-                continue
-            fc = getattr(self, '_freq_config', {}).get(name, {})
-            sms_base = fc.get("sms", 0.1)
-            call_base = fc.get("call", 0.03)
-            # Yandere multiplier: only if character has yandere traits
+            # 病娇提前判定（病娇允许追问/叠发，是其人设；普通角色不叠发）
             try:
                 from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
                 yandere = is_character_yandere(name)
             except Exception:
                 yandere = False
+            # 不叠发（场景/剧情驱动，替代原「距上次互动<5分钟」的纯计时门）：
+            # 普通角色若已主动发过一条、玩家还没回，就不再连发（避免「在吗?在吗?」）；
+            # 空会话（首次联系）或玩家最后发言（球在角色这边）才可主动；病娇不受此限。
+            _lastmsg = self._messages.last_message(name)
+            if not yandere and _lastmsg is not None and not _lastmsg.get("is_user"):
+                continue
+            fc = getattr(self, '_freq_config', {}).get(name, {})
+            sms_base = fc.get("sms", 0.1)
+            call_base = fc.get("call", 0.03)
             if yandere:
                 sms_base = min(sms_base * 2.5, 0.8)
                 call_base = min(call_base * 3, 0.3)
@@ -283,7 +309,9 @@ class ProactiveMonitor(QObject):
                     self._contacts.touch_interaction(name)
                     continue
             # Call: rarer, separate check
-            call_chance = call_base * 0.3 + min(idle_sec / 3600, 0.3)
+            # 来电比短信打扰得多——同样的频率设定要稀得多。加 0.06 阻尼：滑块 0–0.5 → 每 tick 0–0.03，
+            # 即满值(0.5)约 33 分钟一通、默认(0.03)约 9 小时一通。相对偏好（谁更爱打）保留。
+            call_chance = call_base * 0.06
             if yandere:
                 call_chance *= 2
             if random.random() < call_chance:
@@ -311,7 +339,7 @@ class ProactiveMonitor(QObject):
                 f"作为主动联系的一方，你会发一条什么短信？"
                 f"只回复短信内容，不要加任何前缀、引号或格式。"
             )
-            result = _call_llm(name, setting, prompt, sms_hist, story_context=story)
+            result = _call_llm(name, setting, prompt, sms_hist, story_context=story, initiate=True)
             if result and len(result) > 2:
                 return result
         except Exception:

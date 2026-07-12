@@ -407,6 +407,38 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
     for i, (cn, sp) in enumerate(phone_items):
         w.route_llm_reply(cn, sp, stagger_index=i)
 
+    # ── 场景状态维护：在场角色一直保持在场，直到「转场/时间跳跃」或「有人离开」才释放。
+    # 主动监控据此绝不给当面在场的角色发短信（保守检测——宁可漏放、不误清，以免又骚扰在场角色）。
+    _mon_scene = get_monitor()
+    if _mon_scene is not None:
+        try:
+            import re as _re6
+            _narr = " ".join(narration_parts)
+            _last_user = ""
+            for _m in reversed(getattr(ctx, "messages", None) or []):
+                if isinstance(_m, dict) and _m.get("role") == "user" and isinstance(_m.get("content"), str):
+                    _last_user = _m["content"]
+                    break
+            # 玩家显式移动（开场括号动作）或旁白明确的时间跳跃/换地点 → 视为转场
+            _player_moved = bool(_re6.match(
+                r'^\s*[（(]\s*(?:去|前往|赶去|赶往|离开|回家|回到|出门|走出|回房|回公寓|回住处)', _last_user))
+            _TRANSITION_KW = ("第二天", "次日", "翌日", "隔天", "几天后", "数日后", "一周后", "一个月后",
+                              "几小时后", "半小时后", "场景切换", "转场",
+                              "回到家", "回到房间", "回到公寓", "回到住处", "回到自己的")
+            if _player_moved or any(k in _narr for k in _TRANSITION_KW):
+                _mon_scene.clear_scene()              # 上一场景结束
+                for _s in spoke_chars:                # 新场景的当面角色 = 本轮说话的人
+                    _mon_scene.set_scene_character(_s)
+            # 有人离开：旁白里「X 离开/走了/告辞…」→ 把 X 移出在场（其余人仍在场）
+            for _cn in char_settings:
+                if _re6.search(
+                    rf'{_re6.escape(_cn)}[^。！？!?\n]{{0,6}}(?:离开|走了|离去|告辞|离席|先走|先行离|转身离|起身离|扬长而去)',
+                    _narr,
+                ):
+                    _mon_scene.remove_scene_character(_cn)
+        except Exception:
+            pass
+
     # ── Heuristic fallback: LLM narrated an incoming call instead of using the
     # CALL marker. Only fire when: no CALL was signaled, the narration clearly
     # describes someone *placing* a call, and that caller hasn't spoken this
@@ -433,6 +465,42 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
                     call_type = "video" if "视频" in narration else "voice"
                     w._incoming_call_signal.emit(caller, call_type)
 
+    # ── Heuristic fallback: LLM narrated a stranger/unknown-contact SMS in 旁白/COT
+    # instead of calling send_sms_stranger. Recover the message body + attribute the
+    # sender, then deliver so it actually lands in the SMS app. Only fires when the
+    # sender is a single, unambiguous roster character.
+    if narration_parts:
+        import re as _re4
+        _narr = " ".join(narration_parts)
+        _mm = _re4.search(
+            r'(?:未知联系人|陌生号码|未知号码|陌生人|陌生短信)[^「『"（(]{0,10}[「『"]([^」』"]{1,200})[」』"]',
+            _narr,
+        )
+        if _mm:
+            _stranger_msg = _mm.group(1).strip()
+            _sms_cue = (r'(?:未知联系人|发来短信|发短信|发条短信|发了短信|发送短信|'
+                        r'拿到[^。！？!?\n]{0,6}号码|要到[^。！？!?\n]{0,6}号码|搞到[^。！？!?\n]{0,6}号码)')
+            _cands: set[str] = set()
+            for _cn in char_settings:
+                _cn = (_cn or "").strip()
+                if not _cn:
+                    continue
+                _al = {_cn}
+                if len(_cn) >= 4:
+                    _al.add(_cn[:2]); _al.add(_cn[-2:])
+                elif len(_cn) == 3:
+                    _al.add(_cn[-2:])
+                _alt = "|".join(_re4.escape(a) for a in _al if len(a) >= 2)
+                if not _alt:
+                    continue
+                if (_re4.search(rf'(?:{_alt})[^。！？!?\n]{{0,20}}{_sms_cue}', _narr)
+                        or _re4.search(rf'{_sms_cue}[^。！？!?\n]{{0,20}}(?:{_alt})', _narr)):
+                    _cands.add(_cn)
+            _sender = next(iter(_cands)) if len(_cands) == 1 else ""
+            if _sender and _sender not in spoke_chars and _stranger_msg:
+                logger.info("Recovered narrated stranger SMS -> %s: %s", _sender, _stranger_msg[:40])
+                w.route_llm_reply(_sender, _stranger_msg, known=False)
+
     # Strip COT + PHONE + CALL from stored dialog to save tokens
     if isinstance(data, dict) and "dialog" in data:
         original_len = len(data["dialog"])
@@ -450,9 +518,290 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
             ctx.message["content"] = prefix + _json.dumps(data, ensure_ascii=False)
 
 
+# ── opening-scene contact seeding ─────────────────────────────────────
+
+# 联系方式声明的线索词（开场从「用户情景」/首条消息里确定性播种联系人用）
+_CONTACT_KW = r"(?:联系方式|联络方式|号码|微信|电话号)"
+_HOLD_VERB = r"(?:只?有|留了?|存了?|加了?|保存了?|存着|留着)"
+_DROP_VERB = r"(?:删|拉黑|屏蔽|移除)"
+
+
+def _opening_char_aliases(roster: list[str]) -> dict[str, str]:
+    """构造「别名 -> 角色名」映射；跨角色歧义的别名剔除，避免误配。
+
+    别名候选 = 全名 + 常见简称（四字名取前两字/后两字，如 房石阳明→房石、坂田银时→银时）。
+    """
+    counts: dict[str, list[str]] = {}
+    for name in roster:
+        name = (name or "").strip()
+        if not name:
+            continue
+        cands = {name}
+        if len(name) >= 4:
+            cands.add(name[:2])
+            cands.add(name[-2:])
+        elif len(name) == 3:
+            cands.add(name[-2:])
+        for alias in cands:
+            if len(alias) >= 2:
+                counts.setdefault(alias, [])
+                if name not in counts[alias]:
+                    counts[alias].append(name)
+    return {alias: names[0] for alias, names in counts.items() if len(names) == 1}
+
+
+def _seed_contacts_from_opening(ctx) -> None:
+    """从开场设定确定性播种手机联系人（纯插件侧，绕开首轮工具预算）。
+
+    仅当通讯录为空时运行（播种后自然不再触发，也能自愈空存档）。扫描来源两路并集：
+    - 全部 system 消息（覆盖填进「用户情景」字段、被拼入系统提示的设定）；
+    - 第一条 user 消息（覆盖直接打字进开场消息的设定）；
+    - 兜底：`_temp_split.json` 的 scenario 字段（用户情景的权威副本）。
+    用角色名锚定 + 联系方式关键词共现判定，故不会误读工具说明里的泛指「角色…联系方式」。
+    玩家声明「有/加了…联系方式」→ 建联系人；声明「删了/拉黑/没有…」→ 跳过。
+    """
+    import re
+    try:
+        w = get_phone_widget()
+        if w is None:
+            return
+        store = w.contact_store()
+        if store.get_contacts():
+            return  # 已有联系人，不重复播种
+
+        parts: list[str] = []
+        first_user_seen = False
+        for m in getattr(ctx, "messages", None) or []:
+            if not isinstance(m, dict):
+                continue
+            content = m.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            role = m.get("role")
+            if role == "system":
+                parts.append(content)
+            elif role == "user" and not first_user_seen:
+                parts.append(content)
+                first_user_seen = True
+        try:
+            _sp = Path("data/character_templates/_temp_split.json")
+            if _sp.is_file():
+                _sc = _json.loads(_sp.read_text(encoding="utf-8")).get("scenario")
+                if isinstance(_sc, str) and _sc:
+                    parts.append(_sc)
+        except Exception:
+            pass
+        text = "\n".join(parts)
+        if not text:
+            return
+
+        try:
+            from config.config_manager import ConfigManager
+            roster = [c.name for c in ConfigManager().config.characters if (c.name or "").strip()]
+        except Exception:
+            roster = []
+        if not roster:
+            return
+
+        alias_to_name = _opening_char_aliases(roster)
+
+        # 按「小句」判定，比逐名锚定更稳：
+        # 切句时【保留顿号】，让「A、B 的联系方式」这类名字列表留在同一小句；
+        # 每个提到「联系方式」的小句先判正/负极性，再把该句里出现的角色按极性归类。
+        # 例：「我有乌尔比安、银时的联系方式」→ 正（乌尔比安+银时）；
+        #     「房石的联系方式还没有」→ 负（还没→房石不建）。
+        _CONTACT_KWS = ("联系方式", "联络方式", "号码", "微信", "电话号")
+        _NEG_MARKS = ("没", "未", "尚未", "删", "拉黑", "屏蔽", "移除", "还没", "不知道", "丢了", "找不到")
+        seed_names: set[str] = set()
+        drop_names: set[str] = set()
+        for clause in re.split(r"[。，；！？!?\n]", text):
+            if not any(k in clause for k in _CONTACT_KWS):
+                continue
+            is_neg = any(n in clause for n in _NEG_MARKS)
+            for alias, name in alias_to_name.items():
+                if alias in clause:
+                    (drop_names if is_neg else seed_names).add(name)
+
+        seeded: list[str] = []
+        for name in sorted(seed_names - drop_names):  # 删除/否定声明胜过持有
+            if store.add_contact(name, known=True):
+                seeded.append(name)
+
+        if seeded:
+            # 仅写数据；不在此 worker 线程直接碰 Qt 控件（proactive 直接读 store，
+            # UI 在下次打开短信时自然刷新）。
+            logger.info("Seeded contacts from opening scenario: %s", "、".join(seeded))
+    except Exception:
+        logger.exception("seed contacts from opening failed")
+
+
+# 开场若声明「过去收到过短信」的检测（只扫用户开场+scenario，不扫系统提示——
+# 否则会命中工具说明里的「未知联系人/短信」而永远误触发）
+_INTRO_SMS_RE = None  # 延迟编译
+
+
+def _maybe_seed_intro_sms(ctx) -> None:
+    """开场声明「手机里已有/过去收到过（未知）短信」时，插件生成一条并按未知联系人投递。
+
+    背景短信的正文需要内容，确定性代码生成不了；而主模型受首轮工具预算限制、且「未知联系人」
+    匿名难归属，常只在旁白里含糊带过。这里用轻量 LLM 调用（复用 sms_llm，独立 API、绕开主
+    模型预算）自拟一条正文，选一个「未建联系人」的角色作发信人，known=False 显示为未知联系人。
+    每存档只跑一次（marker）；已有任何短信则跳过（避免与主模型 send_sms_stranger 重复）。
+    """
+    import re
+    global _INTRO_SMS_RE
+    try:
+        w = get_phone_widget()
+        if w is None:
+            return
+        dd = getattr(w, "_data_dir", None)
+        marker = (dd / "_intro_sms_done") if dd is not None else None
+        if marker is not None and marker.exists():
+            return
+
+        # 只扫「首条 user 消息 + _temp_split.json scenario」
+        parts: list[str] = []
+        for m in getattr(ctx, "messages", None) or []:
+            if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str):
+                parts.append(m["content"])
+                break
+        try:
+            _sp = Path("data/character_templates/_temp_split.json")
+            if _sp.is_file():
+                _sc = _json.loads(_sp.read_text(encoding="utf-8")).get("scenario")
+                if isinstance(_sc, str) and _sc:
+                    parts.append(_sc)
+        except Exception:
+            pass
+        opening = "\n".join(parts)
+        if not opening:
+            return
+        if _INTRO_SMS_RE is None:
+            _INTRO_SMS_RE = re.compile(
+                r"(?:未知联系人|陌生号码|陌生人|陌生短信)"
+                r"|(?:收到|收过|发来|发过|来过|给我发|发给我)[^。！？!?\n]{0,8}(?:短信|消息|信息)"
+            )
+        if not _INTRO_SMS_RE.search(opening):
+            return
+
+        ms = w.message_store()
+        try:
+            from config.config_manager import ConfigManager
+            chars = [(c.name, (c.character_setting or ""))
+                     for c in ConfigManager().config.characters if (c.name or "").strip()]
+        except Exception:
+            chars = []
+        if not chars:
+            return
+        # 已有任何短信 → 主模型/之前已投递，别重复
+        if any(ms.get_messages(n) for n, _ in chars):
+            return
+        known = set(w.contact_store().get_contacts())
+        cands = [(n, s) for n, s in chars if n not in known]
+        if not cands:
+            return
+        # 选发信人：优先设定里暗示对玩家有兴趣/暧昧/病娇的，否则第一个未建联系人
+        cands.sort(key=lambda it: sum(k in it[1] for k in
+                   ("暧昧", "喜欢", "占有", "病娇", "执着", "兴趣", "追求", "痴迷")), reverse=True)
+        sender, setting = cands[0]
+
+        if marker is not None:
+            try:
+                marker.write_text("1", encoding="utf-8")  # 先置位，避免并发/重入重复生成
+            except Exception:
+                pass
+
+        import threading
+
+        def _run():
+            try:
+                from plugins.shinsekai_chat_phone.sms_llm import _call_llm
+                reply = _call_llm(
+                    sender, setting,
+                    "这是你第一次用【未知号码】给对方发短信（对方还没存你的号码，在对方那里显示为未知联系人）。"
+                    "结合你的性格写一条简短开场白（一两句），可带点悬念或试探，但不要报出真名。",
+                    [],
+                    initiate=True,
+                )
+                r = (reply or "").strip().strip("「」『』\"'")
+                if r and len(r) > 1 and not r.startswith("["):
+                    logger.info("Intro SMS generated from %s (unknown)", sender)
+                    w.route_llm_reply(sender, r, known=False)
+            except Exception:
+                logger.exception("intro sms generation failed")
+
+        threading.Thread(target=_run, daemon=True, name="intro-sms").start()
+    except Exception:
+        logger.exception("maybe seed intro sms failed")
+
+
+def _reset_phone_data(w) -> None:
+    """清空本存档手机数据（内存 + 文件），用于新开存档。
+
+    不做 Qt UI 刷新（本函数跑在 LLM worker 线程；UI 在下次打开手机时自然读到空状态）。
+    每步独立 try/except，尽量清干净、任何一步失败不影响其余。头像等资产缓存保留。
+    """
+    import contextlib
+    with contextlib.suppress(Exception):
+        cs = w.contact_store()
+        for n in list(cs.get_contacts()):
+            cs.remove_contact(n)
+    with contextlib.suppress(Exception):
+        w.message_store()._messages.clear()
+    with contextlib.suppress(Exception):
+        ma = w._messages_app
+        ma._own_messages.clear()
+        ma._previews.clear()
+    with contextlib.suppress(Exception):
+        gs = w._group_store
+        gs._groups.clear()
+        gs._msg_idx = 0
+        gs._save()
+    dd = getattr(w, "_data_dir", None)
+    if dd is not None:
+        for fn in ("messages.json", "groups.json", "call_log.json", "video_call_log.json",
+                   "pending_proactive.json", "browser_history.json", "_intro_sms_done"):
+            with contextlib.suppress(Exception):
+                p = dd / fn
+                if p.is_file():
+                    p.unlink()
+    logger.info("Phone data reset for new game")
+
+
+def _maybe_reset_phone_on_new_game(ctx) -> None:
+    """新开存档时清空手机数据。
+
+    判定：本轮对话里「有开场 user 消息、但还没有任何 assistant 回合」→ 全新一局的第一轮。
+    继续存档必然已有 assistant 消息，因此绝不会误清正在进行的存档。仅在确有旧数据时动作。
+    """
+    try:
+        w = get_phone_widget()
+        if w is None:
+            return
+        msgs = getattr(ctx, "messages", None) or []
+        has_user = any(isinstance(m, dict) and m.get("role") == "user" for m in msgs)
+        has_assistant = any(isinstance(m, dict) and m.get("role") == "assistant" for m in msgs)
+        if not has_user or has_assistant:
+            return  # 继续存档 / 尚无开场 → 不清
+        try:
+            has_data = bool(w.contact_store().get_contacts()) or bool(w.message_store()._messages)
+        except Exception:
+            has_data = False
+        if has_data:
+            _reset_phone_data(w)
+    except Exception:
+        logger.exception("maybe reset phone on new game failed")
+
+
 def _on_before_chat(ctx) -> None:
     """Inject PHONE-format system message + hacker/yandere context."""
     try:
+        # 新开存档：先清空旧手机数据（仅新局第一轮触发），再按开场设定播种联系人
+        _maybe_reset_phone_on_new_game(ctx)
+        # 开场从设定/首条消息确定性播种联系人（须在注入 [手机系统] 之前，避免扫到自身注入内容）
+        _seed_contacts_from_opening(ctx)
+        # 开场若声明「过去收到过（未知）短信」，插件自拟一条并按未知联系人投递（每存档一次）
+        _maybe_seed_intro_sms(ctx)
         # Strip parenthetical instructions like (让XX打电话) from last user msg
         import re as _re_strip
         _paren_re = _re_strip.compile(
@@ -469,10 +818,10 @@ def _on_before_chat(ctx) -> None:
         msg = (
             "[手机系统] "
             "当用户消息以[短信]开头时，对方正在通过手机短信和你聊天。"
-            "短信回复使用PHONE格式：character_name=\"PHONE\", sprite=\"-1\", "
-            "speech=\"角色名：短信正文\"。"
-            "dialog中可以包含COT+1~3条PHONE项（活泼的角色2-3条，沉稳的1条）。"
-            "除此之外不要输出任何角色对话——短信是私密的，不会出现在公开聊天中。"
+            "短信回复必须调用 send_sms(角色名, 短信正文) 工具——可连续多次调用发多条"
+            "（活泼的角色2-3条、沉稳的1条）；若还没和玩家交换过联系方式则用 send_sms_stranger。"
+            "绝不要把短信正文写进 dialog（PHONE项/旁白/普通台词都会显示在主舞台上）——"
+            "短信是私密的，只走工具、不出现在公开聊天里。"
             " [来电] 当剧情中你扮演的角色决定主动给玩家打电话时，"
             "不要直接输出通话台词，而是先输出来电信号："
             "character_name=\"CALL\", sprite=\"-1\", "
@@ -483,18 +832,42 @@ def _on_before_chat(ctx) -> None:
             "◆ 若角色就在玩家身边（当面对话中）：严禁打电话或视频通话"
             "（当面直接说话即可，绝对不要输出CALL信号）。短信默认不用、有话当面说，"
             "但只要剧情合理需要，角色也完全可以主动发短信——具体何时发由你根据角色性格、"
-            "当下情境和剧情走向自然判断，情形不限。唯一要求：发短信前必须先用旁白描写"
-            "角色掏出手机、点开你们聊天框的动作，再用PHONE格式输出短信内容。"
+            "当下情境和剧情走向自然判断，情形不限。可以先用旁白描写"
+            "角色掏出手机、点开你们聊天框的动作，但短信正文本身必须调用 send_sms"
+            "（未交换联系方式则 send_sms_stranger）工具投递，绝不写进 dialog。"
             "（可能的情形很多，仅举例帮助理解：现场有他人时想说的悄悄话、"
             "内敛害羞的角色不敢当面开口的心意、想私下发个东西给你看、"
             "补一句当面没说出口的话、故意用短信调情或试探……等等，视剧情而定。）"
             "旁白示例：他耳根发红，移开目光不敢看你，轻咳一声晃了晃手机，"
-            "低头点开了你们的聊天框——随后用PHONE格式输出那条短信。"
+            "低头点开了你们的聊天框——随后调用 send_sms 工具发出那条短信。"
             "◆ 若角色不在玩家身边（异地、分开状态）：可正常主动发短信或打电话。"
             " [未知联系人] 若角色还没和玩家交换联系方式（没做过 exchange_contacts），"
             "但剧情里他通过某种手段（不限、可含非法方式，自行演绎）拿到了玩家号码，"
             "可用 send_sms_stranger 给玩家发短信——玩家会看到「未知联系人」（不显示真名），"
             "增添悬念；正式加好友仍用 exchange_contacts（届时升级为正常联系人、显示真名）。"
+        )
+        msg += (
+            " [开场通讯录] 故事开场/设定阶段，若玩家声明「已持有／已加／留了某角色的联系方式」，"
+            "请把该角色视为手机联系人——如尚未在通讯录中，本轮优先调用 exchange_contacts(角色名) 补登"
+            "（此类补登优先于 search_tools 等其他工具）；若玩家声明「已删除／拉黑／没有」某角色的联系方式，"
+            "则不要补登、也不要主动联系该角色。"
+        )
+        msg += (
+            " [短信投递铁律] 极其重要：当剧情里某角色要给玩家发短信（不是玩家先在手机里发起的[短信]对话），"
+            "短信正文必须通过【工具】投递，绝对不能写进 dialog——旁白/NARR/普通台词/PHONE 项都不行。"
+            "原因：写进 dialog 会显示在主舞台的公开对话里（PHONE 项同样会露出来），而且不会真正到达手机短信。具体："
+            "已是联系人→调用 send_sms(角色名, 短信正文)；未交换联系方式但已拿到玩家号码→调用 send_sms_stranger(角色真名, 短信正文)。"
+            "可连续多次调用发多条。反例（禁止）：character_name=\"旁白\" 或 \"PHONE\"，speech=\"未知联系人：「……」\"。"
+            "你可以用旁白描写「手机屏幕亮起、一条短信进来」的氛围，但短信正文本身只能走 send_sms / send_sms_stranger 工具。"
+            " 【玩家指令】当玩家消息里出现「（xx给我发短信）」「（xx给我发消息）」「（让xx发短信）」这类括号指令时，"
+            "就是要 xx 主动给玩家发短信——直接用上述工具投递（已建联系人用 send_sms、未建用 send_sms_stranger），"
+            "同样不要写进 dialog（旁白/PHONE 都不行）。"
+        )
+        msg += (
+            " [开场历史短信] 若玩家开场设定里提到手机里「已有／过去收到过」某条短信（尤其未知联系人发来的），"
+            "系统会自动把那条短信补进手机短信 App——你【不要】在 dialog 里再重复输出那条短信的正文，"
+            "也不必调工具补它；你只需在剧情里自然承接「玩家手机里确实有这样一条短信」。"
+            "之后剧情中【新】产生的短信，仍按上面的[短信投递铁律]用 send_sms / send_sms_stranger 工具。"
         )
         # ── Player's chosen name (so characters can address them naturally) ──
         try:

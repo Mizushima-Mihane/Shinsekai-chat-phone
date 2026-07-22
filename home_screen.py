@@ -57,6 +57,8 @@ class HomeScreen(QWidget):
         self._last_badge_count: int = -1
         self._group_icon: _MacaronIcon | None = None
         self._last_group_badge: int = -1
+        self._moments_icon: _MacaronIcon | None = None
+        self._last_moments_badge: int = -1
         self.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
@@ -114,6 +116,8 @@ class HomeScreen(QWidget):
                 self._messages_icon = btn
             elif app_id == "group":
                 self._group_icon = btn
+            elif app_id == "moments":
+                self._moments_icon = btn
             grid.addWidget(btn, row, col)
         layout.addLayout(grid)
         layout.addStretch()
@@ -150,6 +154,14 @@ class HomeScreen(QWidget):
         self._last_group_badge = count
         if self._group_icon is not None:
             self._group_icon.set_badge(count)
+
+    def set_moments_badge(self, count: int) -> None:
+        """Update unread badge on the 朋友圈 app icon (no-op if unchanged)."""
+        if count == self._last_moments_badge:
+            return
+        self._last_moments_badge = count
+        if self._moments_icon is not None:
+            self._moments_icon.set_badge(count)
 
     def _make_launch(self, app_id): return lambda: self.app_launched.emit(app_id)
 

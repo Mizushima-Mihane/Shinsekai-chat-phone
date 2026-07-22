@@ -117,6 +117,17 @@ QScrollArea {
 QScrollArea > QWidget > QWidget {
     background: #FFFAFA;
 }
+
+/* Hide scrollbars phone-wide for the clean internal look — content still
+   scrolls by wheel/drag. Matches the chat views' hidden-scrollbar style and
+   covers list pages, settings, call log, memos, contacts, browser, etc. */
+QScrollBar:vertical { width: 0px; background: transparent; }
+QScrollBar:horizontal { height: 0px; background: transparent; }
+QScrollBar::handle,
+QScrollBar::add-line, QScrollBar::sub-line,
+QScrollBar::add-page, QScrollBar::sub-page {
+    width: 0px; height: 0px; background: transparent; border: none;
+}
 """
 
 

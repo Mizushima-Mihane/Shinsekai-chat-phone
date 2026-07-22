@@ -148,6 +148,15 @@ def _recent_story_context(max_lines: int = 8) -> str:
     return ""
 
 
+def _split_moment_image(text: str) -> tuple[str, str]:
+    """Split a trailing ``[图:描述]`` marker off a moment body. Returns (body, desc)."""
+    import re
+    m = re.search(r'[\[【]\s*图\s*[:：]\s*(.+?)\s*[\]】]\s*$', text or "")
+    if m:
+        return (text[:m.start()].strip(), m.group(1).strip())
+    return ((text or "").strip(), "")
+
+
 class ProactiveMonitor(QObject):
     """Periodic timer that may trigger SMS or call events from contacts.
 
@@ -190,6 +199,7 @@ class ProactiveMonitor(QObject):
     # （转场/时间跳跃）或 remove_scene_character()（某人离开）显式释放。这里的时间戳只做
     # 一个很长的安全兜底（防止漏检转场导致某角色被永久排除主动联系）。
     _SCENE_BACKSTOP_SEC = 7200  # 2 小时
+    _MOMENT_K = 0.03  # 朋友圈主动发的阻尼常数（默认偏静：freq 0.02 → 约每 28h/角色）
 
     def set_scene_character(self, name: str) -> None:
         """标记某角色此刻与玩家当面同场（持续在场，直到显式转场/离开才释放）。
@@ -264,6 +274,10 @@ class ProactiveMonitor(QObject):
         }
         for name in contacts:
             if name not in valid_names:
+                continue
+            # 朋友圈：独立低频 roll，不受在场/叠发门约束（异步「拉」型社交，不打扰）。
+            if self._maybe_post_moment(name):
+                self._contacts.touch_interaction(name)
                 continue
             if name in scene_recent:
                 continue  # in-scene (face-to-face) — don't call/text
@@ -342,6 +356,49 @@ class ProactiveMonitor(QObject):
             result = _call_llm(name, setting, prompt, sms_hist, story_context=story, initiate=True)
             if result and len(result) > 2:
                 return result
+        except Exception:
+            pass
+        return ""
+
+    def _maybe_post_moment(self, name: str) -> bool:
+        """低频掷骰：命中则让该角色静默发一条朋友圈动态（进库+红点，不开主 LLM 回合）。"""
+        mo_base = getattr(self, '_freq_config', {}).get(name, {}).get("moments", 0.02)
+        try:
+            from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
+            if is_character_yandere(name):
+                mo_base = min(mo_base * 1.6, 0.4)
+        except Exception:
+            pass
+        if random.random() >= mo_base * self._MOMENT_K:
+            return False
+        text = self._generate_moment(name)
+        body, desc = _split_moment_image(text)
+        if not body and not desc:
+            return False
+        try:
+            from plugins.shinsekai_chat_phone.plugin import get_phone_widget
+            w = get_phone_widget()
+            if w is not None:
+                w.post_moment_from_llm(name, body, desc)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _generate_moment(self, name: str) -> str:
+        """LLM 自拟一条朋友圈动态（可选结尾 [图:描述]）。"""
+        setting = self._character_settings.get(name, "")
+        story = _recent_story_context()
+        try:
+            from plugins.shinsekai_chat_phone.sms_llm import _call_llm
+            prompt = (
+                "你现在想发一条朋友圈动态。结合你此刻的心情、近况和当前剧情，写一两句朋友圈文案。"
+                "可选：如果想配张图，就在结尾用 [图:简短画面描述] 表示（例如 [图:窗外的雨]）。"
+                "只输出动态正文（含可选的 [图:...]），不要加任何前缀、引号或其它格式。"
+            )
+            result = _call_llm(name, setting, prompt, [], story_context=story, initiate=True)
+            if result and len(result.strip()) > 1:
+                return result.strip()
         except Exception:
             pass
         return ""

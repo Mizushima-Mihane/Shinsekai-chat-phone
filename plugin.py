@@ -217,6 +217,70 @@ def rename_group(group_name: str, new_name: str, operator_name: str = "") -> str
     return "" if final else f"无法把群「{group_name}」改名（群不存在或新名无效）。"
 
 
+# ── LLM tools: moments (朋友圈) ─────────────────────────────────────────
+
+def _coerce_pid(x) -> int:
+    """Coerce a tool-supplied post id ('#12' / '12' / 12) to int; 0 on failure."""
+    try:
+        return int(str(x).strip().lstrip("#"))
+    except Exception:
+        return 0
+
+
+@tool(
+    name="post_moment",
+    group="default",
+    description=(
+        "以某个角色的身份发一条朋友圈动态。character_name是发动态的角色名，text是动态正文。"
+        "image_desc可选，是这条动态配图的简短文字描述（如「海边的晚霞」）——"
+        "本期只作为文字占位显示、不会生成真实图片，不需要配图就留空。"
+        "角色想在朋友圈发状态、晒近况、抒发心情时调用。"
+    ),
+)
+def post_moment(character_name: str, text: str, image_desc: str = "") -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    pid = w.post_moment_from_llm(character_name, text, image_desc)
+    return f"已发布动态 #{pid}。" if pid else "发布失败。"
+
+
+@tool(
+    name="comment_moment",
+    group="default",
+    description=(
+        "以某个角色的身份评论一条朋友圈动态。post_id是被评论动态的编号"
+        "（[朋友圈]提示里每条动态前的 #数字；想评论最新一条就用其中最大的编号）。"
+        "character_name是评论的角色名，text是评论内容。"
+        "reply_to可选：如果这条不是评论动态本身、而是回复动态下某人的评论，就填被回复者的名字"
+        "（回复玩家填「玩家」，回复某角色填角色名）——界面会显示成「谁 回复 谁」。"
+        "角色之间也可以互相评论、接话——多次调用即可让不同角色评论或来回对话。"
+    ),
+)
+def comment_moment(post_id: str, character_name: str, text: str, reply_to: str = "") -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    w.route_moment_comment(_coerce_pid(post_id), character_name, text, reply_to)
+    return ""
+
+
+@tool(
+    name="like_moment",
+    group="default",
+    description=(
+        "以某个角色的身份给一条朋友圈动态点赞。post_id是动态编号"
+        "（[朋友圈]提示里每条动态前的 #数字）。character_name是点赞的角色名。"
+    ),
+)
+def like_moment(post_id: str, character_name: str) -> str:
+    w = get_phone_widget()
+    if w is None:
+        return "手机插件尚未初始化。"
+    w.moment_like_from_llm(_coerce_pid(post_id), character_name)
+    return ""
+
+
 # ── LLM tool: bug character's phone ────────────────────────────────────
 
 @tool(
@@ -757,10 +821,22 @@ def _reset_phone_data(w) -> None:
         gs._groups.clear()
         gs._msg_idx = 0
         gs._save()
+    with contextlib.suppress(Exception):
+        ms = w._moments_store
+        ms._posts.clear()
+        ms._post_idx = 0
+        ms._comment_idx = 0
+        ms._save()
+    with contextlib.suppress(Exception):
+        import shutil
+        imgdir = getattr(w, "_moments_images", None)
+        if imgdir is not None and imgdir.is_dir():
+            shutil.rmtree(imgdir, ignore_errors=True)
     dd = getattr(w, "_data_dir", None)
     if dd is not None:
-        for fn in ("messages.json", "groups.json", "call_log.json", "video_call_log.json",
-                   "pending_proactive.json", "browser_history.json", "_intro_sms_done"):
+        for fn in ("messages.json", "groups.json", "moments.json", "call_log.json",
+                   "video_call_log.json", "pending_proactive.json", "browser_history.json",
+                   "_intro_sms_done"):
             with contextlib.suppress(Exception):
                 p = dd / fn
                 if p.is_file():
@@ -918,6 +994,38 @@ def _on_before_chat(ctx) -> None:
                 "这些变动系统会自动记录、并在下一轮提示相关角色反应，你不必在同一轮硬凑反应——"
                 "如何反应、由谁反应、是否反应，全部根据角色性格与剧情自主演绎。"
             )
+        except Exception:
+            pass
+        # ── Moments (朋友圈) protocol (dynamic: read recent posts) ──
+        try:
+            _wm = get_phone_widget()
+            _moment_lines: list[str] = []
+            if _wm is not None and hasattr(_wm, "_moments_store"):
+                for _p in _wm._moments_store.get_posts()[-6:]:
+                    _who = "我" if _p.get("author") == "__player__" else _p.get("author", "")
+                    _body = (_p.get("text", "") or "").replace("\n", " ")[:30]
+                    _img = "[图]" if (_p.get("image") or _p.get("image_desc")) else ""
+                    _nl = len(_p.get("likes", [])); _nc = len(_p.get("comments", []))
+                    _cm = ""
+                    if _p.get("comments"):
+                        _last = _p["comments"][-1]
+                        _cw = "我" if _last.get("is_user") else _last.get("author", "")
+                        _cm = f" 最近评论 {_cw}：{(_last.get('text', '') or '')[:16]}"
+                    _moment_lines.append(
+                        f"#{_p.get('id')} [{_who}]“{_body}”{_img}（赞{_nl} 评{_nc}）{_cm}")
+            msg += (
+                " [朋友圈] 当用户消息以[朋友圈]开头时，玩家在朋友圈发了动态、或点赞/评论了某条动态。"
+                "朋友圈是线上社交，不受上面【当面场景规则】的限制——即使当面在一起也能刷、能评。"
+                "你可以让相关角色用 post_moment(角色, 正文) 发动态、comment_moment(编号, 角色, 内容) 评论、"
+                "like_moment(编号, 角色) 点赞来回应；角色之间也可以互相评论、接话。"
+                "如果是回复动态下某个人的评论（而不是评论动态本身），在 comment_moment 里加 reply_to=被回复者的名字"
+                "（回复玩家就填「玩家」），会显示成「谁 回复 谁」。"
+                "由你自主决定谁回应、回几条、是否回应——不感兴趣的角色可以完全不理。"
+                "引用某条动态时用它的 #编号。本轮除这些工具调用外，不要输出任何 dialog 台词。"
+            )
+            if _moment_lines:
+                msg += (" 当前朋友圈近况（供参考，不必每轮都发动态；仅在剧情合适时才用 post_moment）："
+                        + "；".join(_moment_lines) + "。")
         except Exception:
             pass
         # Sync proactive SMS the character sent on their own — so the main story

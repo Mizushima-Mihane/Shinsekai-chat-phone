@@ -32,6 +32,8 @@ from plugins.shinsekai_chat_phone.styles import PHONE_QSS, _darken
 from plugins.shinsekai_chat_phone.voice_memo_app import VoiceMemosApp
 from plugins.shinsekai_chat_phone.group_store import GroupStore
 from plugins.shinsekai_chat_phone.group_chat_app import GroupChatApp
+from plugins.shinsekai_chat_phone.moments_store import MomentsStore
+from plugins.shinsekai_chat_phone.moments_app import MomentsApp
 from plugins.shinsekai_chat_phone import sound_fx as _sfx
 
 _logger = logging.getLogger("chat_phone.widget")
@@ -91,10 +93,14 @@ class PhoneWidget(QWidget):
     contact_list_changed = Signal()
     new_proactive_message = Signal(str, str)
     _sms_deliver_signal = Signal(str, str)
+    _sms_typing_signal = Signal(str)  # (character) — 角色确定回复 → GUI 显示正在输入/已读
     _incoming_call_signal = Signal(str, str)  # (character, call_type) — thread-safe LLM-driven incoming call
     _group_deliver_signal = Signal(str, str, str)  # (group, sender, text) — thread-safe group delivery
     _group_refresh_signal = Signal()  # LLM created a group — refresh list on GUI thread
     _group_event_signal = Signal(str, str, str)  # (action, group, arg) — membership/rename/removal → GUI
+    _moment_post_signal = Signal(int)                     # (post_id) — new post → GUI refresh/badge
+    _moment_comment_signal = Signal(int, str, str, str, bool)  # (post_id, author, text, reply_to, is_user)
+    _moment_like_signal = Signal(int, str)                # (post_id, liker)
 
     def __init__(self, submit_cb: object, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -115,7 +121,11 @@ class PhoneWidget(QWidget):
         self._sms_stagger: int = 0  # counter for staggered SMS delivery
         self._group_delay: float = 0.0  # accumulated delay for the current group reply batch
         self._group_delay_time: float = 0.0  # last group-reply schedule time (fallback batch reset)
+        self._moment_delay: float = 0.0  # accumulated delay for the current moment-comment batch
+        self._moment_delay_time: float = 0.0  # last moment-comment schedule time
+        self._last_moment_pid: int = 0  # post the player last interacted with (fallback target)
         self._sms_lock = threading.Lock()
+        self._sms_inflight: dict[str, int] = {}  # per-character SMS replies in flight (typing indicator)
         # Debounce state
         self._last_badge_count: int = -1
         self._refresh_queued: bool = False
@@ -144,6 +154,8 @@ class PhoneWidget(QWidget):
         self._contact_store = ContactStore(self._data_dir / "contacts.json")
         self._message_store = MessageStore()
         self._group_store = GroupStore(self._data_dir / "groups.json")
+        self._moments_store = MomentsStore(self._data_dir / "moments.json")
+        self._moments_images = self._data_dir / "moments_images"
 
         self.setStyleSheet(PHONE_QSS)
 
@@ -244,7 +256,11 @@ class PhoneWidget(QWidget):
         self._group_app.set_sent_callback(self._on_group_sent)
         self._group_app.set_manage_callback(self._on_player_manage)
         self._group_app.set_read_callback(self._update_group_badge)
-        self._moments_placeholder = _placeholder_app("朋友圈功能开发中...", self._go_home, self._frame)
+        self._moments_app = MomentsApp(self._moments_store, self._moments_images, self._frame)
+        self._moments_app.on_back.connect(self._go_home)
+        self._moments_app.set_submit_callback(self._submit_cb)
+        self._moments_app.set_sent_callback(self._on_moment_sent)
+        self._moments_app.set_read_callback(self._update_moments_badge)
 
         # Rounded corner mask for call views (matches phone frame 28px radius)
         call_mask_path = QPainterPath()
@@ -273,15 +289,19 @@ class PhoneWidget(QWidget):
         for w in [self._home, self._messages_app, self._phone_app,
                    self._memos_app, self._browser_app, self._music_app,
                    self._settings_app, self._location_app, self._video_placeholder,
-                   self._group_app, self._moments_placeholder]:
+                   self._group_app, self._moments_app]:
             frame_layout.addWidget(w)
 
         self._sms_deliver_signal.connect(self._deliver_sms)
+        self._sms_typing_signal.connect(self._on_sms_typing)
         self.new_proactive_message.connect(self._on_proactive_message)
         self._incoming_call_signal.connect(self._on_llm_incoming_call)
         self._group_deliver_signal.connect(self._deliver_group)
         self._group_refresh_signal.connect(self._on_group_refresh)
         self._group_event_signal.connect(self._on_group_event)
+        self._moment_post_signal.connect(self._deliver_moment_post)
+        self._moment_comment_signal.connect(self._deliver_moment_comment)
+        self._moment_like_signal.connect(self._deliver_moment_like)
 
         # ── load saved messages ──
         self._load_messages()
@@ -310,6 +330,7 @@ class PhoneWidget(QWidget):
                             "text": m.get("text", ""),
                             "is_user": m.get("is_user", False),
                             "idx": idx,
+                            "read": m.get("read", False),
                         })
                 self._messages_app._msg_idx = max_idx
         except Exception:
@@ -319,7 +340,8 @@ class PhoneWidget(QWidget):
         try:
             data = {}
             for name, msgs in self._messages_app._own_messages.items():
-                data[name] = [{"text": m["text"], "is_user": m["is_user"], "idx": m.get("idx", 0)}
+                data[name] = [{"text": m["text"], "is_user": m["is_user"], "idx": m.get("idx", 0),
+                               "read": m.get("read", False)}
                               for m in msgs[-100:]]
             self._msg_file().write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -481,6 +503,11 @@ class PhoneWidget(QWidget):
             with self._sms_lock:
                 stagger_index = self._sms_stagger
                 self._sms_stagger += 1
+        # Typing indicator: mark one reply in-flight + notify GUI (角色确定回复 → 已读 + 正在输入).
+        # Placed after the early-return guard above so the count never leaks.
+        with self._sms_lock:
+            self._sms_inflight[char_name] = self._sms_inflight.get(char_name, 0) + 1
+        self._sms_typing_signal.emit(char_name)
         # Simulate typing: first msg 1-3s, each subsequent +2-4s
         base_ms = random.randint(1000, 3000)
         stagger_ms = stagger_index * random.randint(2000, 4000)
@@ -492,12 +519,31 @@ class PhoneWidget(QWidget):
         t.start()
 
     def _deliver_sms(self, char_name: str, speech: str):
+        with self._sms_lock:
+            remaining = self._sms_inflight.get(char_name, 0) - 1
+            if remaining <= 0:
+                self._sms_inflight.pop(char_name, None); remaining = 0
+            else:
+                self._sms_inflight[char_name] = remaining
         self._messages_app.add_received_message(char_name, speech, delay=True)
         self._save_messages()
         if self._is_in_chat_with(char_name):
             self._message_store.mark_all_read(char_name)
+        if remaining == 0:
+            self._messages_app.hide_typing()  # no more replies coming → drop 正在输入
         self._update_badge()
         self._refresh_all()
+
+    def _on_sms_typing(self, char_name: str):
+        """GUI-thread slot: 角色确定回复 → 标记玩家消息已读 +（若在看）显示正在输入。"""
+        self._messages_app.mark_user_read(char_name)
+        if self._is_in_chat_with(char_name):
+            self._messages_app.show_typing(char_name)
+
+    def has_inflight(self, char_name: str) -> bool:
+        """Whether an SMS reply from *char_name* is currently in flight (typing)."""
+        with self._sms_lock:
+            return self._sms_inflight.get(char_name, 0) > 0
 
     # ── group chat (LLM-driven, thread-safe via signals) ──
 
@@ -575,6 +621,130 @@ class PhoneWidget(QWidget):
         with self._sms_lock:
             self._group_delay = 0.0
             self._group_delay_time = 0.0
+
+    # ── moments (朋友圈; LLM-driven, thread-safe via signals) ──
+
+    def _is_viewing_moments(self) -> bool:
+        """Whether the Moments feed is the currently visible view."""
+        return (
+            self._state != _State.COLLAPSED
+            and self._current_app == "moments"
+            and self._moments_app._view == "feed"
+        )
+
+    def _update_moments_badge(self):
+        """Refresh the 朋友圈 home-icon badge + floating badge from moments unread."""
+        if getattr(self, "_home", None) is not None:
+            self._home.set_moments_badge(self._moments_store.total_unread())
+        self._update_badge()
+
+    def post_moment_from_llm(self, author: str, text: str, image_desc: str = "") -> int:
+        """A character posts a moment (worker thread — writes synchronously to return the id)."""
+        author = (author or "").strip()
+        if not author or author in _RESERVED_NAMES:
+            return 0
+        pid = self._moments_store.add_post(
+            author, text, image_desc=(image_desc.strip() or None), is_user=False)
+        self._moment_post_signal.emit(pid)
+        return pid
+
+    def _deliver_moment_post(self, pid: int):
+        """GUI slot: a new post landed — refresh if viewing, else just light the badge (no shake)."""
+        if self._is_viewing_moments():
+            self._moments_store.mark_feed_read()
+            self._moments_app.refresh_feed()
+        self._update_moments_badge()
+
+    def route_moment_comment(self, post_id: int, author: str, text: str, reply_to: str = "",
+                             stagger_index: int = 0):
+        """Deliver one character's moment comment with a staggered in-order delay (照 route_group_reply)."""
+        author = (author or "").strip()
+        text = (text or "").strip()
+        reply_to = (reply_to or "").strip()
+        if not author or not text or author in _RESERVED_NAMES:
+            return
+        if stagger_index == 0:
+            with self._sms_lock:
+                now = time.time()
+                if now - self._moment_delay_time > 8.0:
+                    self._moment_delay = 0.0
+                if self._moment_delay <= 0.0:
+                    self._moment_delay = random.uniform(0.6, 1.6)
+                else:
+                    self._moment_delay += random.uniform(1.2, 2.6)
+                delay_sec = self._moment_delay
+                self._moment_delay_time = now
+        else:
+            delay_sec = (random.randint(600, 1800) + stagger_index * random.randint(1200, 2600)) / 1000.0
+        t = threading.Timer(delay_sec, lambda pid=post_id, a=author, tx=text, rt=reply_to: (
+            self._moment_comment_signal.emit(pid, a, tx, rt, False)))
+        t.daemon = True
+        t.start()
+
+    def _deliver_moment_comment(self, post_id: int, author: str, text: str, reply_to: str, is_user: bool):
+        """GUI slot: a comment landed — authoritative write + badge + selective shake."""
+        post = self._moments_store.get_post(post_id)
+        if post is None:  # illegal / stale id → fall back to the post the player last touched
+            fallback = self._last_moment_pid or self._moments_store.latest_post_id()
+            post = self._moments_store.get_post(fallback)
+        if post is None or author in _RESERVED_NAMES:
+            return
+        reply_to = self._normalize_moment_target(reply_to)
+        self._moments_store.add_comment(post["id"], author, text, is_user=is_user, reply_to=reply_to)
+        if self._is_viewing_moments():
+            self._moments_store.mark_feed_read()
+        self._update_moments_badge()
+        self._moments_app.refresh_feed()
+        # Only a comment on the *player's own* post is a direct ping → shake.
+        if post.get("author") == MomentsStore.PLAYER and not self._is_viewing_moments():
+            from plugins.shinsekai_chat_phone.settings_app import is_dnd
+            if not is_dnd():
+                self._shake()
+
+    def moment_like_from_llm(self, post_id: int, liker: str):
+        """A character likes a post (worker thread; independent short delay, no strict stagger)."""
+        liker = (liker or "").strip()
+        if not liker or liker in _RESERVED_NAMES:
+            return
+        t = threading.Timer(random.uniform(0.4, 2.0), lambda pid=post_id, lk=liker: (
+            self._moment_like_signal.emit(pid, lk)))
+        t.daemon = True
+        t.start()
+
+    def _deliver_moment_like(self, post_id: int, liker: str):
+        """GUI slot: a like landed — deduped write + badge; likes never shake."""
+        post = self._moments_store.get_post(post_id)
+        if post is None:
+            return
+        self._moments_store.add_like(post_id, liker)
+        if self._is_viewing_moments():
+            self._moments_store.mark_feed_read()
+        self._update_moments_badge()
+        self._moments_app.refresh_feed()
+
+    def _on_moment_sent(self, pid: int = 0):
+        """Player posted / commented — fresh comment batch + remember the target post."""
+        if pid:
+            self._last_moment_pid = pid
+        with self._sms_lock:
+            self._moment_delay = 0.0
+            self._moment_delay_time = 0.0
+
+    def _normalize_moment_target(self, name: str) -> str:
+        """Map the various ways an LLM refers to the player to the canonical PLAYER key."""
+        name = (name or "").strip()
+        if not name:
+            return ""
+        if name in ("玩家", "我", MomentsStore.PLAYER):
+            return MomentsStore.PLAYER
+        try:
+            from plugins.shinsekai_chat_phone.settings_app import get_player_name
+            pn = (get_player_name() or "").strip()
+            if pn and name == pn:
+                return MomentsStore.PLAYER
+        except Exception:
+            pass
+        return name
 
     # ── group membership / rename (player UI + LLM tools; thread-safe) ──
 
@@ -865,7 +1035,7 @@ class PhoneWidget(QWidget):
         for w in [self._home, self._messages_app, self._phone_app,
                    self._memos_app, self._browser_app, self._music_app,
                    self._settings_app, self._location_app, self._video_placeholder,
-                   self._group_app, self._moments_placeholder]:
+                   self._group_app, self._moments_app]:
             w.hide()
         self._home.show()
 
@@ -881,7 +1051,7 @@ class PhoneWidget(QWidget):
             "location": self._location_app,
             "video": self._video_placeholder,
             "group": self._group_app,
-            "moments": self._moments_placeholder,
+            "moments": self._moments_app,
         }
         # "video" app → placeholder for now; "phone" → reset to voice mode
         if app_id == "phone":
@@ -889,6 +1059,8 @@ class PhoneWidget(QWidget):
             self._phone_app.set_video_mode(False)
         elif app_id == "group":
             self._group_app.refresh_list()
+        elif app_id == "moments":
+            self._moments_app.refresh_feed()
         for w in apps.values():
             w.hide()
         self._home.hide()
@@ -1172,7 +1344,8 @@ class PhoneWidget(QWidget):
     # ── helpers ──
 
     def _update_badge(self):
-        total = self._message_store.total_unread() + self._group_store.total_unread()
+        total = (self._message_store.total_unread() + self._group_store.total_unread()
+                 + self._moments_store.total_unread())
         # Skip if unchanged — prevents redundant layout/repaint
         if total == self._last_badge_count:
             return

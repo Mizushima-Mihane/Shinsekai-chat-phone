@@ -72,7 +72,7 @@ class FreqConfigWidget(QWidget):
             chars = []
 
         for name in chars:
-            fc = self._cfg.get(name, {"sms": 0.1, "call": 0.03, "video_call": 0.01})
+            fc = self._cfg.get(name, {"sms": 0.1, "call": 0.03, "video_call": 0.01, "moments": 0.02})
             row = QWidget()
             rl = QHBoxLayout(row); rl.setContentsMargins(0, 2, 0, 2); rl.setSpacing(6)
 
@@ -105,6 +105,14 @@ class FreqConfigWidget(QWidget):
             vid_spin.setValue(fc.get("video_call", 0.01)); vid_spin.setFixedWidth(60)
             rl.addWidget(vid_spin)
 
+            mo_label = QLabel("朋友圈")
+            mo_label.setStyleSheet("font-size: 11px; color: #888;")
+            rl.addWidget(mo_label)
+            mo_spin = QDoubleSpinBox()
+            mo_spin.setRange(0, 0.3); mo_spin.setSingleStep(0.02)
+            mo_spin.setValue(fc.get("moments", 0.02)); mo_spin.setFixedWidth(60)
+            rl.addWidget(mo_spin)
+
             save_btn = QPushButton("保存")
             save_btn.setFixedWidth(50)
             save_btn.setStyleSheet(
@@ -112,10 +120,11 @@ class FreqConfigWidget(QWidget):
                 " padding: 4px 8px; font-size: 11px; font-weight: 600; border: none; }"
             )
             save_btn.clicked.connect(
-                lambda checked, n=name, s=sms_spin, c=call_spin, v=vid_spin: self._save_char(n, s, c, v))
+                lambda checked, n=name, s=sms_spin, c=call_spin, v=vid_spin, mo=mo_spin:
+                    self._save_char(n, s, c, v, mo))
             rl.addWidget(save_btn)
 
-            self._spinners[name] = (sms_spin, call_spin, vid_spin)
+            self._spinners[name] = (sms_spin, call_spin, vid_spin, mo_spin)
             self._sl.addWidget(row)
 
         self._sl.addStretch()
@@ -136,10 +145,12 @@ class FreqConfigWidget(QWidget):
         save_freq_config(self._cfg)
 
     def _save_char(self, name: str, sms_spin: QDoubleSpinBox, call_spin: QDoubleSpinBox,
-                   vid_spin: QDoubleSpinBox | None = None):
+                   vid_spin: QDoubleSpinBox | None = None, mo_spin: QDoubleSpinBox | None = None):
         entry = {"sms": sms_spin.value(), "call": call_spin.value()}
         if vid_spin is not None:
             entry["video_call"] = vid_spin.value()
+        if mo_spin is not None:
+            entry["moments"] = mo_spin.value()
         self._cfg[name] = entry
         save_freq_config(self._cfg)
         self._notify_monitor()
@@ -160,6 +171,8 @@ class FreqConfigWidget(QWidget):
             entry = {"sms": spinners[0].value(), "call": spinners[1].value()}
             if len(spinners) > 2:
                 entry["video_call"] = spinners[2].value()
+            if len(spinners) > 3:
+                entry["moments"] = spinners[3].value()
             self._cfg[name] = entry
         save_freq_config(self._cfg)
         try:

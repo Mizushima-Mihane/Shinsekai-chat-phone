@@ -36,6 +36,12 @@ class MessagesApp(QWidget):
         self._scroll: QScrollArea | None = None
         self._own_messages: dict[str, list[dict]] = {}
         self._msg_idx: int = 0
+        # typing indicator + read receipt state
+        self._typing_widget: QWidget | None = None
+        self._typing_dots_label: QLabel | None = None
+        self._typing_timer: QTimer | None = None
+        self._typing_phase: int = 0
+        self._last_read_label: QLabel | None = None
         self._signal_received.connect(self._on_received_signal)
         self._setup_ui()
         self._show_list()
@@ -204,11 +210,20 @@ class MessagesApp(QWidget):
         self._msg_layout = QVBoxLayout(mc)
         self._msg_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._msg_layout.setContentsMargins(4, 6, 4, 6); self._msg_layout.setSpacing(6)
+        self._msg_layout.addStretch()  # stretch 恒为末项：气泡/typing 都 insert 到它之前
         msgs = sorted(self._own_messages.get(name, []), key=lambda m: m.get("idx", 0))
         for msg in msgs:
-            self._add_bubble(msg["text"], msg["is_user"])
-        self._msg_layout.addStretch(); scroll.setWidget(mc)
+            self._add_bubble(msg["text"], msg["is_user"], msg.get("read", False))
+        scroll.setWidget(mc)
         self._scroll = scroll; QTimer.singleShot(500, self._scroll_down)
+        # 若不在看时角色已开始打字（inflight>0），进聊天时补显 typing
+        try:
+            from plugins.shinsekai_chat_phone.plugin import get_phone_widget
+            _w = get_phone_widget()
+            if _w is not None and _w.has_inflight(name):
+                self.show_typing(name)
+        except Exception:
+            pass
 
         ibar = QWidget()
         ibar.setStyleSheet(f"background: {get_surface()}; border-top: 1px solid {OUTLINE_VARIANT};")
@@ -233,7 +248,7 @@ class MessagesApp(QWidget):
         _sfx.play(_sfx.SMS_SEND)
         self._msg_idx += 1
         self._own_messages.setdefault(self._character, []).append(
-            {"text": text, "is_user": True, "idx": self._msg_idx})
+            {"text": text, "is_user": True, "idx": self._msg_idx, "read": False})
         self._store.add_message(self._character, text, is_user=True)
         inp.clear(); self._add_bubble(text, True); self._scroll_down()
         if self._sms_sent_cb is not None: self._sms_sent_cb(self._character)
@@ -244,7 +259,7 @@ class MessagesApp(QWidget):
             )
 
     # ── Bubbles ──
-    def _add_bubble(self, text: str, is_user: bool):
+    def _add_bubble(self, text: str, is_user: bool, read: bool = False):
         if self._msg_layout is None: return
         from PySide6.QtGui import QFont, QFontMetrics
         bubble = QLabel(text)
@@ -265,14 +280,89 @@ class MessagesApp(QWidget):
         wrapper = QWidget(); wl = QHBoxLayout(wrapper)
         wl.setContentsMargins(4, 1, 4, 1); wl.setSpacing(6)
         if is_user:
+            # 竖列：气泡 + 右对齐「已读」；仅最后一条玩家气泡点亮（清掉上一条的）
+            if self._last_read_label is not None:
+                self._last_read_label.setText(""); self._last_read_label.setVisible(False)
+            read_label = QLabel("已读" if read else "")
+            read_label.setStyleSheet("color: #B0A8A8; font-size: 10px; padding: 0 2px;")
+            read_label.setVisible(bool(read))
+            self._last_read_label = read_label
+            col_w = QWidget(); col = QVBoxLayout(col_w)
+            col.setContentsMargins(0, 0, 0, 0); col.setSpacing(1)
+            col.addWidget(bubble, 0, Qt.AlignmentFlag.AlignRight)
+            col.addWidget(read_label, 0, Qt.AlignmentFlag.AlignRight)
             wl.addStretch(1)
-            wl.addWidget(bubble, 0, top)
+            wl.addWidget(col_w, 0, top)
             wl.addWidget(av, 0, top)
         else:
             wl.addWidget(av, 0, top)
             wl.addWidget(bubble, 0, top)
             wl.addStretch(1)
-        self._msg_layout.addWidget(wrapper)
+        # 插到 typing 之前；无 typing 则插到末尾 stretch 之前（stretch 恒为最后一项）
+        if self._typing_widget is not None:
+            idx = self._msg_layout.indexOf(self._typing_widget)
+        else:
+            idx = self._msg_layout.count() - 1
+        if idx < 0:
+            idx = max(0, self._msg_layout.count() - 1)
+        self._msg_layout.insertWidget(idx, wrapper)
+
+    # ── typing indicator + read receipt ──
+    def show_typing(self, name: str):
+        """Show a「对方正在输入…」bubble at the bottom (above the stretch). Idempotent."""
+        if self._msg_layout is None or name != self._character:
+            return
+        if self._typing_widget is not None:
+            return  # already showing
+        av = self._bubble_avatar(False, 30)
+        dots = QLabel("·")
+        dots.setStyleSheet(
+            "background: #FFFFFF; color: #8A7A7A; border: 1px solid #F0E8E8;"
+            " border-radius: 4px 16px 16px 16px; padding: 6px 12px; font-size: 13px;")
+        top = Qt.AlignmentFlag.AlignTop
+        wrapper = QWidget(); wl = QHBoxLayout(wrapper)
+        wl.setContentsMargins(4, 1, 4, 1); wl.setSpacing(6)
+        wl.addWidget(av, 0, top); wl.addWidget(dots, 0, top); wl.addStretch(1)
+        self._typing_widget = wrapper
+        self._typing_dots_label = dots
+        self._typing_phase = 0
+        self._msg_layout.insertWidget(self._msg_layout.count() - 1, wrapper)  # stretch 之前
+        if self._typing_timer is None:
+            self._typing_timer = QTimer(self)
+            self._typing_timer.setInterval(400)
+            self._typing_timer.timeout.connect(self._typing_tick)
+        self._typing_timer.start()
+        self._scroll_down()
+
+    def _typing_tick(self):
+        if self._typing_dots_label is None:
+            return
+        self._typing_phase = (self._typing_phase + 1) % 3
+        self._typing_dots_label.setText("·" * (self._typing_phase + 1))
+
+    def hide_typing(self):
+        self._stop_typing()
+
+    def _stop_typing(self):
+        """Stop the animation and drop the typing bubble. Idempotent + crash-safe."""
+        if self._typing_timer is not None:
+            self._typing_timer.stop()
+        if self._typing_widget is not None:
+            self._typing_widget.deleteLater()
+        self._typing_widget = None
+        self._typing_dots_label = None
+
+    def mark_user_read(self, name: str):
+        """Mark this character's player messages as read; light up the last bubble's「已读」."""
+        changed = False
+        for m in self._own_messages.get(name, []):
+            if m.get("is_user") and not m.get("read"):
+                m["read"] = True; changed = True
+        if (name == self._character and self._view == "chat"
+                and self._last_read_label is not None):
+            self._last_read_label.setText("已读"); self._last_read_label.setVisible(True)
+        if changed and self._save_cb is not None:
+            self._save_cb()
 
     def _scroll_down(self):
         if self._scroll:
@@ -280,6 +370,8 @@ class MessagesApp(QWidget):
                 self._scroll.verticalScrollBar().maximum()))
 
     def _clear(self):
+        self._stop_typing()  # stop timer before its widgets are deleteLater'd
+        self._last_read_label = None
         self._msg_layout = None; self._scroll = None
         while self._stack.count():
             w = self._stack.takeAt(0).widget()

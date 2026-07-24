@@ -1033,6 +1033,22 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"ok": bool(ok), "name": _cn}
         if cmd == "send_group":
             return _send_group(str(args.get("name", "")), str(args.get("text", "")))
+        if cmd == "mark_group_read":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.mark_group_read(str(args.get("name", ""))))}
+        if cmd == "group_add_member":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.group_join(str(args.get("name", "")), str(args.get("member", "")), _player_name()))}
+        if cmd == "group_remove_member":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.group_kick(str(args.get("name", "")), str(args.get("member", "")), _player_name()))}
+        if cmd == "group_rename":
+            from plugins.shinsekai_chat_phone import phone_core
+            _nn = phone_core.group_rename(str(args.get("name", "")), str(args.get("newName", "")), _player_name())
+            return {"ok": bool(_nn), "name": _nn}
+        if cmd == "group_disband":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.group_disband(str(args.get("name", ""))))}
         if cmd == "mark_read":
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.mark_thread_read(str(args.get("name", ""))))}

@@ -407,6 +407,35 @@ def group_rename(old: str, new: str, operator: str = "") -> str:
     return final
 
 
+def group_disband(name: str) -> bool:
+    """Delete a group entirely (解散群聊)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    with _lock:
+        data = _load_groups()
+        if name in data["groups"]:
+            data["groups"].pop(name, None)
+            _write_json(_groups_path(), data)
+            return True
+    return False
+
+
+def mark_group_read(name: str) -> bool:
+    """Clear a group's unread counter (on open)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    with _lock:
+        data = _load_groups()
+        g = data["groups"].get(name)
+        if isinstance(g, dict) and g.get("unread"):
+            g["unread"] = 0
+            _write_json(_groups_path(), data)
+            return True
+    return False
+
+
 # ── Moments (朋友圈) — byte-compatible with moments_store.MomentsStore ──
 #
 # moments.json = {"posts": [...], "post_idx": int, "comment_idx": int}

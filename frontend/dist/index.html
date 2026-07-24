@@ -1124,8 +1124,10 @@
   loadAvatars().then(fillRender); // avatars fetched separately, just once
   // host says the character hung up (call.ended) -> close the call screen
   window.addEventListener("message", function(e){
-    var d = e.data;
-    if(d && d.__pluginOverlay==="callEnded" && (current.view==="inCall" || current.view==="incomingCall")){ closePhone(); }
+    var d = e.data; if(!d) return;
+    if(d.__pluginOverlay==="callEnded" && (current.view==="inCall" || current.view==="incomingCall")){ closePhone(); return; }
+    // host 用「隐藏不销毁」模式重新显示手机时通知刷新，后台拉最新数据(界面状态保留)
+    if(d.__doki==="phone" && d.type==="show"){ load().then(fillRender); loadAvatars().then(fillRender); }
   });
 })();
 </script>

@@ -21,6 +21,7 @@ lives in the one active session dir, so this collapses to that session.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -690,6 +691,238 @@ def _set_freq(level: int) -> None:
         logger.debug("phone freq write failed", exc_info=True)
 
 
+# ── Voice memos (录音) — merge the character's own TTS audio (Qt-free) ──
+
+_AUDIO_CACHE = Path("cache") / "audio"
+_AUDIO_EXTS = (".wav", ".mp3", ".ogg")
+
+
+def _rec_dir() -> Path:
+    return _base() / "recordings"
+
+
+def _rec_memos_path() -> Path:
+    return _rec_dir() / "memos.json"
+
+
+def _rec_list() -> list[dict[str, Any]]:
+    data = _read_json(_rec_memos_path(), [])
+    return data if isinstance(data, list) else []
+
+
+def _rec_save(memos: list) -> None:
+    try:
+        p = _rec_memos_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(memos[:100], ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.debug("rec save failed", exc_info=True)
+
+
+def _write_recording_flag(active: bool) -> None:
+    """Tiny flag the runtime reads each turn so the character may notice recording."""
+    try:
+        p = _base() / "recording.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"active": bool(active), "since": time.time()}, ensure_ascii=False),
+                     encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _merge_wavs(files: list, out_dir: Path):
+    """Merge captured audio into one wav (pydub if present, else stdlib concat)."""
+    files = [f for f in files if f]
+    if not files:
+        return None
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    out_path = out_dir / f"memo_{int(time.time())}.wav"
+    try:
+        from pydub import AudioSegment  # type: ignore
+        combined = AudioSegment.empty()
+        n = 0
+        for fp in files:
+            try:
+                combined += AudioSegment.from_file(str(fp)); n += 1
+            except Exception:
+                pass
+        if n and len(combined) > 0:
+            combined.export(str(out_path), format="wav")
+            return out_path
+    except Exception:
+        pass
+    if len(files) == 1:
+        try:
+            import shutil
+            shutil.copy2(str(files[0]), str(out_path))
+            return out_path
+        except Exception:
+            return None
+    try:
+        import wave
+        frames: list = []
+        params = None
+        for fp in files:
+            try:
+                with wave.open(str(fp), "rb") as wf:
+                    if params is None:
+                        params = wf.getparams()
+                    frames.append(wf.readframes(wf.getnframes()))
+            except Exception:
+                pass
+        if params and frames:
+            with wave.open(str(out_path), "wb") as wf:
+                wf.setparams(params)
+                for frm in frames:
+                    wf.writeframes(frm)
+            return out_path
+    except Exception:
+        pass
+    return None
+
+
+class _Recorder:
+    """Watches cache/audio for the character's TTS output and merges it (mirrors the
+    old Qt voice_memo_app, Qt-free). Runs in the bridge, which shares the app cwd."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.active = False
+        self.start_ts = 0.0
+        self._known: set = set()
+        self._staged: list = []
+        self._thread = None
+        self._stop_evt = None
+
+    def _capture_new(self, stage: Path, shutil_mod) -> None:
+        """Copy any cache/audio file we haven't seen yet (cache rotates every 100)."""
+        if not _AUDIO_CACHE.is_dir():
+            return
+        try:
+            entries = sorted(_AUDIO_CACHE.iterdir(), key=lambda p: p.stat().st_mtime)
+        except Exception:
+            return
+        for p in entries:
+            if p.suffix.lower() not in _AUDIO_EXTS:
+                continue
+            with self._lock:
+                if p.name in self._known:
+                    continue
+                self._known.add(p.name)
+            try:
+                dst = stage / f"{int(time.time() * 1000)}_{p.name}"
+                shutil_mod.copy2(str(p), str(dst))
+                with self._lock:
+                    self._staged.append(dst)
+            except Exception:
+                pass
+
+    def _watch(self) -> None:
+        import shutil
+        stage = _rec_dir() / "_staging"
+        try:
+            stage.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        evt = self._stop_evt
+        while evt is not None and not evt.wait(1.5):
+            with self._lock:
+                if not self.active:
+                    break
+            self._capture_new(stage, shutil)
+
+    def start(self) -> dict:
+        with self._lock:
+            if self.active:
+                return {"ok": True, "active": True}
+            self.active = True
+            self.start_ts = time.time()
+            self._staged = []
+            self._known = set()
+            if _AUDIO_CACHE.is_dir():
+                try:
+                    for p in _AUDIO_CACHE.iterdir():
+                        if p.suffix.lower() in _AUDIO_EXTS:
+                            self._known.add(p.name)
+                except Exception:
+                    pass
+            self._stop_evt = threading.Event()
+            self._thread = threading.Thread(target=self._watch, daemon=True, name="phone-rec-watch")
+            self._thread.start()
+        _write_recording_flag(True)
+        return {"ok": True, "active": True}
+
+    def stop(self) -> dict:
+        import shutil
+        with self._lock:
+            if not self.active:
+                _write_recording_flag(False)
+                return {"ok": False, "error": "not_recording"}
+            self.active = False
+            evt = self._stop_evt
+            self._stop_evt = None
+            dur = int(time.time() - self.start_ts)
+        if evt:
+            evt.set()
+        th = self._thread
+        if th:
+            th.join(timeout=3)
+        self._capture_new(_rec_dir() / "_staging", shutil)   # final catch
+        with self._lock:
+            staged = list(self._staged)
+        merged = _merge_wavs(staged, _rec_dir())
+        memo = {
+            "id": int(time.time() * 1000),
+            "title": time.strftime("%m/%d %H:%M"),
+            "duration": dur,
+            "ts": time.time(),
+            "file_count": len(staged),
+            "merged": (merged.name if merged else None),
+        }
+        memos = _rec_list()
+        memos.insert(0, memo)
+        _rec_save(memos)
+        try:
+            shutil.rmtree(str(_rec_dir() / "_staging"), ignore_errors=True)
+        except Exception:
+            pass
+        _write_recording_flag(False)
+        return {"ok": True, "memo": memo}
+
+    def status(self) -> dict:
+        with self._lock:
+            return {
+                "active": self.active,
+                "elapsed": int(time.time() - self.start_ts) if self.active else 0,
+                "captured": len(self._staged),
+            }
+
+
+_RECORDER = _Recorder()
+
+
+def _rec_delete(mid) -> None:
+    _rec_save([m for m in _rec_list() if str(m.get("id")) != str(mid)])
+
+
+def _rec_audio(mid) -> dict:
+    """Return the merged recording as a base64 data URI for in-webview playback."""
+    import base64
+    for m in _rec_list():
+        if str(m.get("id")) == str(mid) and m.get("merged"):
+            fp = _rec_dir() / str(m["merged"])
+            try:
+                raw = fp.read_bytes()
+                if 0 < len(raw) <= 6_000_000:
+                    return {"data": "data:audio/wav;base64," + base64.b64encode(raw).decode("ascii")}
+            except Exception:
+                pass
+    return {"data": ""}
+
+
 # ── RPC entry point ──────────────────────────────────────────────────
 
 def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -761,6 +994,19 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             from plugins.shinsekai_chat_phone import phone_core
             ok, msg = phone_core.launch_music()
             return {"ok": bool(ok), "error": ("" if ok else msg)}
+        if cmd == "rec_start":
+            return _RECORDER.start()
+        if cmd == "rec_stop":
+            return _RECORDER.stop()
+        if cmd == "rec_status":
+            return _RECORDER.status()
+        if cmd == "rec_list":
+            return {"memos": _rec_list()}
+        if cmd == "rec_delete":
+            _rec_delete(args.get("id"))
+            return {"ok": True}
+        if cmd == "rec_audio":
+            return _rec_audio(args.get("id"))
         if cmd == "settings":
             return _settings()
         if cmd == "set_profile":

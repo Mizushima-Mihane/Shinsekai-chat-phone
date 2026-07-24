@@ -1333,6 +1333,14 @@ def _on_before_chat(ctx) -> None:
             "结果要具体、有细节、够劲爆吸睛，可结合当前剧情与相关角色制造猛料、八卦或反转，"
             "勾起玩家继续深挖的欲望。本轮除该工具调用外，不要输出任何台词或旁白。"
         )
+        # ── Recording (录音) awareness — player may be recording your voice ──
+        try:
+            _rf = Path("data/plugins/com.shinsekai.chat_phone/recording.json")
+            if _rf.is_file() and _json.loads(_rf.read_text(encoding="utf-8")).get("active"):
+                msg += ("（旁白提示：玩家此刻正举着手机，像是在录你的声音——你可以自然地察觉并作出反应，"
+                        "也可以毫无察觉，由你把握，别显得生硬。）")
+        except Exception:
+            pass
         # Sync proactive SMS the character sent on their own — so the main story
         # knows about them. Consume (clear) the queue after injecting.
         try:

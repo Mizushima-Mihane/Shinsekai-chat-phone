@@ -196,6 +196,18 @@
   .ghost-btn{width:100%;height:40px;border:0;border-radius:13px;background:transparent;color:var(--accent-2);font-size:13px;font-weight:600;cursor:pointer;transition:transform .1s}
   .ghost-btn:active{transform:scale(.97)}
   .primary-btn[disabled]{opacity:.5;pointer-events:none}
+  .rec-hint{margin:12px 14px;color:var(--muted);font-size:11.5px;line-height:1.6;text-align:center}
+  .rec-live{margin:4px 14px 8px;display:flex;align-items:center;justify-content:center;gap:8px;color:#c2607a;font-size:12.5px;font-weight:600}
+  .rec-dot{width:10px;height:10px;border-radius:50%;background:#e0607a;animation:recpulse 1s infinite}
+  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .rec-row{display:flex;align-items:center;gap:10px}
+  .rec-play,.rec-del{cursor:pointer;transition:transform .08s}
+  .rec-play:active,.rec-del:active{transform:scale(.9)}
+  .rec-play{color:var(--accent-2)}
+  .rec-fabwrap{position:absolute;left:0;right:0;bottom:16px;display:flex;justify-content:center;pointer-events:none}
+  .rec-fab{pointer-events:auto;height:46px;padding:0 28px;border:0;border-radius:23px;background:var(--accent-2);color:#fff;font-size:14px;font-weight:700;cursor:pointer;box-shadow:3px 5px 14px rgba(150,80,110,.3);transition:transform .12s}
+  .rec-fab:active{transform:scale(.95)}
+  .rec-fab.on{background:#c2607a}
   .set-card.pad{padding:14px}
   .section-title{margin:14px 16px 6px;color:var(--soft);font-size:11px;font-weight:700}
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
@@ -851,7 +863,61 @@
     }
     render();
   };
-  VIEWS.voice = stub("录音");
+  VIEWS.voice = async function(){
+    var memos = [], st = {active:false, elapsed:0, captured:0}, pollTimer = null, audioEl = null;
+    try { var l = await rpc("rec_list"); memos = (l&&l.memos)||[]; } catch(e){}
+    try { var s0 = await rpc("rec_status"); if(s0) st = s0; } catch(e){}
+    function fmt(sec){ sec=Math.max(0,sec|0); return Math.floor(sec/60)+":"+String(sec%60).padStart(2,"0"); }
+    function liveHTML(){ return '<span class="rec-dot"></span>正在录音 '+fmt(st.elapsed)+' · 已捕获 '+st.captured+' 段'; }
+    function render(){
+      var list = memos.length ? memos.map(function(m){
+        return '<div class="row rec-row"><button class="icon-btn rec-play" data-play="'+esc(String(m.id))+'">▶</button>'+
+          '<span class="grow"><b>'+esc(m.title||"录音")+'</b><small>'+(m.file_count||0)+' 段 · '+fmt(m.duration||0)+'</small></span>'+
+          '<button class="icon-btn rec-del" data-del="'+esc(String(m.id))+'">🗑</button></div>';
+      }).join("") : '<div class="empty">还没有录音。<br><small>点下方按钮开始,会捕获角色接下来的语音。</small></div>';
+      screen.innerHTML = header("录音") +
+        '<div class="scroll"><div class="rec-hint">录音时会捕获角色 TTS 合成的语音,停止后合并成一条。</div>'+
+        (st.active ? '<div class="rec-live">'+liveHTML()+'</div>' : '')+
+        '<div class="list">'+list+'</div><div style="height:84px"></div></div>'+
+        '<div class="rec-fabwrap"><button class="rec-fab'+(st.active?" on":"")+'" id="rec-btn">'+(st.active?"⏹ 停止":"⏺ 开始录音")+'</button></div>';
+      wireBack();
+      screen.querySelector("#rec-btn").onclick = toggle;
+      screen.querySelectorAll("[data-play]").forEach(function(el){ el.onclick = function(){ play(el.getAttribute("data-play")); }; });
+      screen.querySelectorAll("[data-del]").forEach(function(el){ el.onclick = async function(){
+        var id = el.getAttribute("data-del");
+        try { await rpc("rec_delete",{id:id}); } catch(e){}
+        memos = memos.filter(function(m){ return String(m.id)!==id; }); render();
+      };});
+    }
+    async function toggle(){
+      if(st.active){
+        stopPoll();
+        var r=null; try { r = await rpc("rec_stop"); } catch(e){}
+        st.active=false; st.captured=0;
+        if(r && r.memo){ memos.unshift(r.memo); }
+        render();
+      } else {
+        try { await rpc("rec_start"); } catch(e){}
+        st.active=true; st.elapsed=0; st.captured=0; render(); startPoll();
+      }
+    }
+    function startPoll(){ stopPoll(); pollTimer = setInterval(async function(){
+      if(current.view!=="voice"){ stopPoll(); return; }
+      var s=null; try { s = await rpc("rec_status"); } catch(e){}
+      if(!s) return;
+      st.active=s.active; st.elapsed=s.elapsed; st.captured=s.captured;
+      var live = screen.querySelector(".rec-live");
+      if(st.active){ if(live) live.innerHTML = liveHTML(); }
+      else { stopPoll(); render(); }
+    }, 1000); }
+    function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+    async function play(id){
+      var r=null; try { r = await rpc("rec_audio",{id:id}); } catch(e){}
+      if(r && r.data){ if(!audioEl) audioEl = new Audio(); audioEl.src = r.data; audioEl.play().catch(function(){}); }
+    }
+    render();
+    if(st.active) startPoll();
+  };
 
   // status bar: clock + battery
   function tick(){ try { document.getElementById("clock").textContent =

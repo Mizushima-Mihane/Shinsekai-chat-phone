@@ -149,6 +149,35 @@ def add_contact(name: str, known: bool = True) -> bool:
         return True
 
 
+def add_manual_contact(name: str, stranger: bool = True) -> bool:
+    """Player manually adds a contact by name from the 通讯录 add-bar.
+
+    Unlike a stranger who texts first, the player already knows the name, so the
+    entry stays ``known=True`` (shown normally, not hidden as 未知联系人). The
+    ``stranger=True`` flag instead records that the *character* has not met the
+    player, so the SMS turn can be framed to make the character baffled about who
+    is contacting them.
+    """
+    name = (name or "").strip()
+    if _is_junk_name(name):
+        return False
+    with _lock:
+        path = session_dir() / "contacts.json"
+        data = _read_json(path, {}) or {}
+        if not isinstance(data, dict):
+            data = {}
+        contacts = data.setdefault("contacts", {})
+        info = contacts.get(name)
+        if isinstance(info, dict):
+            info["known"] = True
+            if stranger and "stranger" not in info:
+                info["stranger"] = True
+        else:
+            contacts[name] = {"added_at": time.time(), "known": True, "stranger": bool(stranger)}
+        _write_json(path, data)
+        return True
+
+
 def deliver_sms(name: str, text: str, known: bool = True) -> bool:
     """A character sends the player an SMS (adds the contact if new)."""
     name = (name or "").strip()
@@ -561,6 +590,20 @@ def unknown_names() -> list:
             if isinstance(info, dict) and info.get("known", True) is False and not _is_junk_name(str(name)):
                 out.append(str(name))
     return out
+
+
+def is_stranger_contact(name: str) -> bool:
+    """True if this contact was manually added and the character has not met the player."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    data = _read_json(session_dir() / "contacts.json", {}) or {}
+    contacts = data.get("contacts") if isinstance(data, dict) else None
+    if isinstance(contacts, dict):
+        info = contacts.get(name)
+        if isinstance(info, dict):
+            return bool(info.get("stranger"))
+    return False
 
 
 # ── Web-phone avatars (global {name: dataURI}) ─────────────────────────

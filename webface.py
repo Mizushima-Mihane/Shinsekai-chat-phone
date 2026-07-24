@@ -328,8 +328,22 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
     # instantly even when no runtime is connected (send_command waits up to ~2s).
     try:
         import threading
-        runtime_text = (f'[短信] {name}收到了你的短信："{text}"。'
-                        f'请调用 send_sms 工具回复，不要输出对话。')
+        stranger = False
+        try:
+            if phone_core.is_stranger_contact(name):
+                # baffled framing only until the character has replied at least once
+                prior = phone_core.messages_for(name)
+                stranger = not any(isinstance(m, dict) and not m.get("is_user") for m in prior)
+        except Exception:
+            stranger = False
+        if stranger:
+            runtime_text = (f'[短信] {name}收到了一条陌生短信："{text}"。'
+                            f'发信人不在{name}的通讯录里，{name}也想不起何时把号码给过对方，你们或许素未谋面——'
+                            f'请让{name}结合人设自然反应（困惑、警惕或好奇皆可），不要假装早就认识对方。'
+                            f'请调用 send_sms 工具回复，不要输出对话。')
+        else:
+            runtime_text = (f'[短信] {name}收到了你的短信："{text}"。'
+                            f'请调用 send_sms 工具回复，不要输出对话。')
         threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
                          daemon=True, name="phone-sms-trigger").start()
     except Exception:
@@ -579,6 +593,12 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "group":
             _nm = str(args.get("name", ""))
             return {"group": next((x for x in _groups() if x.get("name") == _nm), None)}
+        if cmd == "create_group":
+            from plugins.shinsekai_chat_phone import phone_core
+            _gn = str(args.get("name", "")).strip()
+            _mem = [str(m).strip() for m in (args.get("members") or []) if str(m).strip()]
+            _gid = phone_core.group_create(_gn, _mem) if _gn else ""
+            return {"ok": bool(_gid), "name": _gid}
         if cmd == "call_log":
             return {"calls": _call_log()}
         if cmd == "browser":
@@ -596,6 +616,13 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"ok": True}
         if cmd == "send_sms":
             return _send_sms(str(args.get("name", "")), str(args.get("text", "")))
+        if cmd == "add_contact":
+            from plugins.shinsekai_chat_phone import phone_core
+            _cn = str(args.get("name", "")).strip()
+            if not _cn:
+                return {"ok": False, "error": "empty"}
+            ok = phone_core.add_manual_contact(_cn, stranger=bool(args.get("stranger", True)))
+            return {"ok": bool(ok), "name": _cn}
         if cmd == "send_group":
             return _send_group(str(args.get("name", "")), str(args.get("text", "")))
         if cmd == "mark_read":

@@ -32,7 +32,7 @@
   .batt{position:relative;width:22px;height:11px;border:1.5px solid var(--soft);border-radius:3px;padding:1px}
   .batt:after{content:"";position:absolute;right:-3px;top:3px;width:2px;height:5px;border-radius:0 1px 1px 0;background:var(--soft)}
   .batt i{display:block;height:100%;width:100%;border-radius:1px;background:var(--accent-2)}
-  .screen{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+  .screen{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;position:relative}
   .scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch}
   .scroll::-webkit-scrollbar{width:7px;height:7px}
   .scroll::-webkit-scrollbar-track{background:transparent}
@@ -78,6 +78,47 @@
   .charset{padding:24px 18px}
   .charset-hero{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px}
   .charset-name{font-size:17px;color:#6f637a;font-weight:700}
+  .cg-name{padding:14px}
+  .cg-name input{width:100%;height:40px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:14px;outline:0}
+  .cg-pick.on{background:#eadbe1}
+  .cg-check{flex:0 0 auto;width:22px;height:22px;display:grid;place-items:center;color:var(--accent-2);font-weight:700;font-size:14px}
+  .dial-row{gap:8px}
+  .dial-btn{flex:0 0 auto;height:30px;padding:0 14px;border:0;border-radius:15px;background:#e9dbe1;color:var(--accent-2);font-size:12.5px;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);cursor:pointer;transition:transform .08s}
+  .dial-btn:active{transform:scale(.93)}
+  .dial-btn.video{background:#dce6ea;color:#4a6b78}
+  b.missed,small.missed{color:#c2607a}
+  .call-back{cursor:pointer;transition:transform .08s}
+  .call-back:active{transform:scale(.9)}
+  .call-back.missed{color:#c2607a}
+  .cplus{flex:0 0 auto;width:34px;height:34px;border:0;border-radius:12px;background:var(--bg);color:var(--accent);font-size:20px;display:grid;place-items:center;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);cursor:pointer;transition:transform .2s}
+  .cplus.on{transform:rotate(45deg)}
+  .cplus:active{transform:scale(.9)}
+  .plus-sheet{position:absolute;left:12px;bottom:70px;z-index:20;display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--bg);border-radius:16px;box-shadow:3px 5px 16px rgba(111,83,104,.24),-2px -2px 8px var(--hi);transform-origin:left bottom;opacity:0;transform:translateY(10px) scale(.84);pointer-events:none;transition:opacity .16s ease,transform .26s cubic-bezier(.34,1.56,.64,1)}
+  .plus-sheet.on{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+  .plus-item{display:flex;align-items:center;gap:10px;height:42px;padding:0 18px 0 10px;border:0;border-radius:12px;background:transparent;color:var(--ink);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:transform .1s}
+  .plus-item:active{background:#eadbe1;transform:scale(.97)}
+  .pi-ic{flex:0 0 auto;display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:var(--pink);color:var(--accent-2);font-size:14px}
+  .bubble.imgb{display:flex;flex-direction:column;gap:5px;align-items:flex-start}
+  .imgph{width:66px;height:50px;border-radius:9px;background:linear-gradient(135deg,#efe2e8,#e0d8ea);display:grid;place-items:center;font-size:22px}
+  .bubble.imgb small{opacity:.72;font-size:11px}
+  .ask-ov{position:absolute;inset:0;z-index:40;display:grid;place-items:center;background:rgba(60,44,54,.28);opacity:0;transition:opacity .18s}
+  .ask-ov.on{opacity:1}
+  .ask-box{width:82%;max-width:250px;background:var(--bg);border-radius:18px;padding:16px;box-shadow:4px 6px 18px rgba(60,44,54,.3);transform:scale(.9);transition:transform .24s cubic-bezier(.34,1.56,.64,1)}
+  .ask-ov.on .ask-box{transform:scale(1)}
+  .ask-title{font-size:14px;font-weight:700;color:var(--accent-ink);margin-bottom:10px}
+  .ask-in{width:100%;box-sizing:border-box;border:0;border-radius:12px;padding:10px 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13.5px;outline:0;resize:none;font-family:inherit}
+  .ask-btns{display:flex;gap:8px;margin-top:12px}
+  .ask-b{flex:1;height:38px;border:0;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;transition:transform .1s}
+  .ask-b:active{transform:scale(.96)}
+  .ask-b.cancel{background:#e7e0ea;color:#8a7d92}
+  .ask-b.ok{background:var(--accent-2);color:#fff}
+  .ask-text{font-size:12.5px;color:#7c7086;line-height:1.55;margin-bottom:2px}
+  .add-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
+  .add-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
+  .add-go{flex:0 0 auto;height:38px;padding:0 16px;border:0;border-radius:12px;background:var(--accent-2);color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:transform .1s}
+  .add-go:active{transform:scale(.95)}
+  .qcall{cursor:pointer;transition:transform .08s}
+  .qcall:active{transform:scale(.9)}
   /* ── Call screen ── */
   .callscreen{display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,#efeaf2,#e4dde8)}
   .call-top{display:flex;flex-direction:column;align-items:center}
@@ -215,6 +256,43 @@
   function wireBack(){ var b = screen.querySelector("[data-home]"); if(b) b.onclick = go.bind(null, "home", null); }
   function fail(e){ screen.innerHTML = '<div class="empty">加载失败<br><small>'+esc(e && e.message || e)+'</small></div>'; wireBack(); }
 
+  // Reusable inline text prompt (webview-safe; replaces window.prompt). Resolves to trimmed value or null.
+  function askText(o){ o = o || {};
+    return new Promise(function(resolve){
+      var ov = document.createElement("div"); ov.className = "ask-ov";
+      var field = o.multi
+        ? '<textarea class="ask-in" rows="3" placeholder="'+esc(o.placeholder||"")+'" maxlength="'+(o.max||200)+'"></textarea>'
+        : '<input class="ask-in" placeholder="'+esc(o.placeholder||"")+'" maxlength="'+(o.max||200)+'" autocomplete="off">';
+      ov.innerHTML = '<div class="ask-box"><div class="ask-title">'+esc(o.title||"")+'</div>'+field+
+        '<div class="ask-btns"><button class="ask-b cancel">取消</button><button class="ask-b ok">'+esc(o.ok||"确定")+'</button></div></div>';
+      screen.appendChild(ov);
+      requestAnimationFrame(function(){ ov.classList.add("on"); });
+      var inp = ov.querySelector(".ask-in"); setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 60);
+      function close(v){ ov.classList.remove("on"); setTimeout(function(){ ov.remove(); }, 180); resolve(v); }
+      ov.querySelector(".cancel").onclick = function(){ close(null); };
+      ov.querySelector(".ok").onclick = function(){ close((inp.value||"").trim() || null); };
+      ov.onclick = function(e){ if(e.target===ov) close(null); };
+      if(!o.multi){ inp.onkeydown = function(e){ if(e.key==="Enter"){ e.preventDefault(); close((inp.value||"").trim()||null); } }; }
+    });
+  }
+
+  // Reusable yes/no confirm dialog. Resolves to true/false.
+  function askConfirm(o){ o = o || {};
+    return new Promise(function(resolve){
+      var ov = document.createElement("div"); ov.className = "ask-ov";
+      ov.innerHTML = '<div class="ask-box"><div class="ask-title">'+esc(o.title||"")+'</div>'+
+        (o.text ? '<div class="ask-text">'+esc(o.text)+'</div>' : '')+
+        '<div class="ask-btns"><button class="ask-b cancel">'+esc(o.cancel||"取消")+'</button>'+
+        '<button class="ask-b ok">'+esc(o.ok||"确定")+'</button></div></div>';
+      screen.appendChild(ov);
+      requestAnimationFrame(function(){ ov.classList.add("on"); });
+      function close(v){ ov.classList.remove("on"); setTimeout(function(){ ov.remove(); }, 180); resolve(v); }
+      ov.querySelector(".cancel").onclick = function(){ close(false); };
+      ov.querySelector(".ok").onclick = function(){ close(true); };
+      ov.onclick = function(e){ if(e.target===ov) close(false); };
+    });
+  }
+
   var VIEWS = {};
   var current = { view:"home", arg:null };
   function go(view, arg){ current = { view:view, arg:arg }; render(); }
@@ -228,7 +306,7 @@
     var apps = [
       {id:"messages", ic:"✉", name:"短信", badge:unread},
       {id:"groups", ic:"❁", name:"群聊", badge:gunread},
-      {id:"calls", ic:"☎", name:"电话"},
+      {id:"calls", ic:"☎︎", name:"电话"},
       {id:"contacts", ic:"☺", name:"通讯录"},
       {id:"browser", ic:"◎", name:"浏览器"},
       {id:"music", ic:"♪", name:"音乐"},
@@ -264,8 +342,14 @@
       '<button class="hbtn" data-call aria-label="呼叫">☎</button>'+
       '<button class="hbtn" data-charset aria-label="角色设置">⚙</button></div>'+
       '<div class="scroll msgs" id="msgs"></div>'+
-      '<form class="composer" id="cf"><div class="field"><input id="ci" placeholder="发短信给 '+esc(disp(name))+'" autocomplete="off"></div>'+
-      '<button class="send" type="submit">➤</button></form>';
+      '<form class="composer" id="cf"><button class="cplus" type="button" data-plus aria-label="更多">＋</button>'+
+      '<div class="field"><input id="ci" placeholder="发短信给 '+esc(disp(name))+'" autocomplete="off"></div>'+
+      '<button class="send" type="submit">➤</button></form>'+
+      '<div class="plus-sheet" id="plusSheet">'+
+        '<button class="plus-item" data-act="voice"><span class="pi-ic">☎</span>语音聊天</button>'+
+        '<button class="plus-item" data-act="video"><span class="pi-ic">📹</span>视频通话</button>'+
+        '<button class="plus-item" data-act="image"><span class="pi-ic">🖼</span>发送图片</button>'+
+      '</div>';
     screen.querySelector("[data-back]").onclick = go.bind(null, "messages", null);
     screen.querySelector("[data-charset]").onclick = go.bind(null, "charSettings", name);
     screen.querySelector("[data-call]").onclick = function(){ go("inCall", {name:name, type:"voice", dir:"outgoing"}); };
@@ -275,10 +359,15 @@
     })();
     var box = screen.querySelector("#msgs");
     var msgs = [];
+    function bubbleHTML(m){
+      var t = m.text||"";
+      if(t.indexOf("[图片]")===0){ var d = t.slice(4).trim();
+        return '<div class="bubble imgb"><div class="imgph">🖼</div>'+(d?'<small>'+esc(d)+'</small>':'')+'</div>'; }
+      return '<div class="bubble"><p>'+esc(t)+'</p></div>';
+    }
     function draw(){
-      box.innerHTML = '<time class="day">短信</time>' + (msgs.length ? msgs.map(function(m){
-        return '<div class="msg '+(m.isUser?"out":"in")+'">'+avatar(m.isUser?"我":name,true)+
-          '<div class="bubble"><p>'+esc(m.text)+'</p></div></div>'; }).join("")
+      box.innerHTML = (msgs.length ? msgs.map(function(m){
+        return '<div class="msg '+(m.isUser?"out":"in")+'">'+avatar(m.isUser?"我":name,true)+bubbleHTML(m)+'</div>'; }).join("")
         : '<div class="empty">和 '+esc(name)+' 说点什么吧。</div>');
       box.scrollTop = box.scrollHeight;
     }
@@ -311,6 +400,25 @@
       try { await rpc("send_sms",{name:name, text:text}); } catch(e){}
       pollReply();
     };
+    // composer '+' menu: voice / video call, send image
+    var plusBtn = screen.querySelector("[data-plus]"), sheet = screen.querySelector("#plusSheet");
+    function closeSheet(){ sheet.classList.remove("on"); plusBtn.classList.remove("on"); }
+    plusBtn.onclick = function(){ var on = sheet.classList.toggle("on"); plusBtn.classList.toggle("on", on); };
+    screen.querySelector("#ci").addEventListener("focus", closeSheet);
+    box.addEventListener("scroll", closeSheet, {passive:true});
+    sheet.querySelectorAll(".plus-item").forEach(function(el){ el.onclick = async function(){
+      var act = el.getAttribute("data-act"); closeSheet();
+      if(act==="voice"){ go("inCall", {name:name, type:"voice", dir:"outgoing"}); return; }
+      if(act==="video"){ go("inCall", {name:name, type:"video", dir:"outgoing"}); return; }
+      if(act==="image"){
+        var d = await askText({title:"发送图片", placeholder:"描述这张图片（如：海边的晚霞）", max:120});
+        if(!d) return;
+        var t = "[图片] "+d;
+        msgs.push({text:t, isUser:true}); draw();
+        try { await rpc("send_sms",{name:name, text:t}); } catch(e){}
+        pollReply();
+      }
+    };});
   };
 
   // ── Contacts ──
@@ -318,12 +426,32 @@
     var snap = data;
     var rows = (snap.contacts||[]).map(function(n){
       return '<button class="row" data-name="'+esc(n)+'">'+avatar(n)+
-        '<span class="grow"><b>'+esc(disp(n))+'</b><small>发消息</small></span><span class="icon-btn">✉</span></button>';
+        '<span class="grow"><b>'+esc(disp(n))+'</b><small>'+(isUnknown(n)?"未知联系人":"发消息")+'</small></span>'+
+        '<span class="icon-btn qcall" data-qc="'+esc(n)+'" aria-label="呼叫">☎</span>'+
+        '<span class="icon-btn">✉</span></button>';
     }).join("");
-    screen.innerHTML = header("通讯录") + '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">通讯录还是空的。</div>')+'</div>';
+    screen.innerHTML = header("通讯录") +
+      '<div class="add-bar"><input id="add-name" placeholder="输入名字添加联系人" autocomplete="off" maxlength="24">'+
+      '<button class="add-go" data-add type="button">添加</button></div>'+
+      '<div class="scroll">'+
+      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">通讯录还是空的。<br><small>上方输入名字添加,或在剧情里交换联系方式。</small></div>')+'</div>';
     wireBack();
+    screen.querySelectorAll("[data-qc]").forEach(function(el){ el.onclick = function(ev){ ev.stopPropagation();
+      go("inCall", {name:el.getAttribute("data-qc"), type:"voice", dir:"outgoing"}); }; });
     screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
+    async function doAdd(){
+      var inp = screen.querySelector("#add-name"); var nm = (inp.value||"").trim();
+      if(!nm){ inp.focus(); return; }
+      if((data.contacts||[]).indexOf(nm) >= 0){ inp.value=""; go("thread", nm); return; }   // already a contact
+      var yes = await askConfirm({title:"以非正常手段添加？",
+        text:"你并未和「"+nm+"」正常交换过联系方式，你们或许素未谋面。强行添加后你可以给 TA 发消息，但对方多半并不知道你是谁。确定要这么做吗？",
+        ok:"仍然添加"});
+      if(!yes) return;
+      try { await rpc("add_contact",{name:nm, stranger:true}); } catch(e){}
+      inp.value=""; await load(); go("thread", nm);
+    }
+    screen.querySelector("[data-add]").onclick = doAdd;
+    screen.querySelector("#add-name").onkeydown = function(e){ if(e.key==="Enter"){ e.preventDefault(); doAdd(); } };
   };
 
   // ── Character settings (per-contact avatar) ──
@@ -362,15 +490,41 @@
   VIEWS.calls = async function(){
     var calls = data.calls || [];
     var rows = calls.map(function(c){
-      var dir = c.type==="outgoing" ? "↗ 呼出" : c.type==="incoming" ? "↙ 呼入" : "⚠ 未接";
-      var dur = c.duration ? " · "+c.duration+"秒" : "";
+      var missed = c.type==="missed";
+      var label = missed ? "未接来电" : c.type==="outgoing" ? "已拨打" : "已接听";
+      var dur = (!missed && c.duration) ? " · "+c.duration+"秒" : "";
       return '<button class="row" data-name="'+esc(c.name)+'">'+avatar(c.name)+
-        '<span class="grow"><b>'+esc(c.name)+'</b><small>'+(c.video?"视频 ":"")+dir+dur+'</small></span><span class="icon-btn">'+(c.video?"📹":"☎")+'</span></button>';
+        '<span class="grow"><b'+(missed?' class="missed"':'')+'>'+esc(disp(c.name))+'</b>'+
+        '<small'+(missed?' class="missed"':'')+'>'+(c.video?"视频 ":"")+label+dur+'</small></span>'+
+        '<span class="icon-btn call-back'+(missed?" missed":"")+'" data-cb="'+esc(c.name)+'" data-cv="'+(c.video?"1":"")+'">'+(c.video?"📹":"☎")+'</span></button>';
     }).join("");
-    screen.innerHTML = header("电话") + '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有通话记录。</div>')+'</div>';
+    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>电话</b>'+
+      '<button class="hbtn" data-dial aria-label="拨号">✆</button></div><div class="scroll">'+
+      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有通话记录。<br><small>点右上角拨号。</small></div>')+'</div>';
     wireBack();
+    screen.querySelector("[data-dial]").onclick = go.bind(null, "dial", null);
+    screen.querySelectorAll(".call-back").forEach(function(el){ el.onclick = function(ev){
+      ev.stopPropagation();
+      go("inCall", {name:el.getAttribute("data-cb"), type:(el.getAttribute("data-cv")==="1"?"video":"voice"), dir:"outgoing"});
+    }; });
     screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
+  };
+
+  // ── Dial: pick a contact, choose voice / video ──
+  VIEWS.dial = async function(){
+    var contacts = (data.contacts||[]).filter(function(n){ return !isUnknown(n); });
+    var rows = contacts.length ? contacts.map(function(n){
+      return '<div class="row dial-row">'+avatar(n)+'<span class="grow"><b>'+esc(disp(n))+'</b></span>'+
+        '<button class="dial-btn" data-voice="'+esc(n)+'">语音</button>'+
+        '<button class="dial-btn video" data-video="'+esc(n)+'">视频</button></div>';
+    }).join("") : '<div class="empty">还没有可拨打的联系人。<br><small>先在剧情里交换联系方式。</small></div>';
+    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button><b>拨号</b><span class="hbtn"></span></div>'+
+      '<div class="scroll">'+(contacts.length ? '<div class="list">'+rows+'</div>' : rows)+'</div>';
+    screen.querySelector("[data-back]").onclick = go.bind(null, "calls", null);
+    screen.querySelectorAll("[data-voice]").forEach(function(el){ el.onclick = function(){
+      go("inCall", {name:el.getAttribute("data-voice"), type:"voice", dir:"outgoing"}); }; });
+    screen.querySelectorAll("[data-video]").forEach(function(el){ el.onclick = function(){
+      go("inCall", {name:el.getAttribute("data-video"), type:"video", dir:"outgoing"}); }; });
   };
 
   // ── Browser ──
@@ -449,10 +603,39 @@
         '<span class="grow"><b>'+esc(g.name)+'</b><small>'+esc(sub)+'</small></span>'+
         (g.unread ? '<span class="badge">'+g.unread+'</span>' : '')+'</button>';
     }).join("");
-    screen.innerHTML = header("群聊") + '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有群聊。<br><small>剧情里被拉进群后会出现在这里。</small></div>')+'</div>';
+    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>群聊</b>'+
+      '<button class="hbtn" data-newgroup aria-label="建群">＋</button></div><div class="scroll">'+
+      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有群聊。<br><small>点右上角 ＋ 建群,或剧情里被拉进群。</small></div>')+'</div>';
     wireBack();
+    screen.querySelector("[data-newgroup]").onclick = go.bind(null, "createGroup", null);
     screen.querySelectorAll("[data-g]").forEach(function(el){ el.onclick = go.bind(null, "group", el.getAttribute("data-g")); });
+  };
+
+  // ── Create group (pick already-exchanged contacts) ──
+  VIEWS.createGroup = async function(){
+    var contacts = (data.contacts||[]).filter(function(n){ return !isUnknown(n); });
+    var picks = {};
+    var list = contacts.length ? contacts.map(function(n){
+      return '<button class="row cg-pick" data-pick="'+esc(n)+'">'+avatar(n)+
+        '<span class="grow"><b>'+esc(disp(n))+'</b></span><span class="cg-check" aria-hidden></span></button>';
+    }).join("") : '<div class="empty">还没有可选联系人。<br><small>先在剧情里和角色交换联系方式。</small></div>';
+    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button><b>建群</b>'+
+      '<button class="hbtn" data-create aria-label="创建">✓</button></div>'+
+      '<div class="scroll"><div class="cg-name"><input id="cg-name" placeholder="群名称" maxlength="20" autocomplete="off"></div>'+
+      '<div class="page-sub">选择成员</div>'+(contacts.length ? '<div class="list">'+list+'</div>' : list)+'</div>';
+    screen.querySelector("[data-back]").onclick = go.bind(null, "groups", null);
+    screen.querySelectorAll("[data-pick]").forEach(function(el){ el.onclick = function(){
+      var n = el.getAttribute("data-pick"); picks[n] = !picks[n];
+      el.classList.toggle("on", picks[n]);
+      el.querySelector(".cg-check").textContent = picks[n] ? "✓" : "";
+    }; });
+    screen.querySelector("[data-create]").onclick = async function(){
+      var name = (screen.querySelector("#cg-name").value||"").trim();
+      if(!name){ screen.querySelector("#cg-name").focus(); return; }
+      var members = Object.keys(picks).filter(function(n){ return picks[n]; });
+      try { await rpc("create_group", {name:name, members:members}); } catch(e){}
+      await load(); go("groups", null);
+    };
   };
 
   VIEWS.group = async function(name){

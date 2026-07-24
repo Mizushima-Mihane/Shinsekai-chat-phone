@@ -208,6 +208,7 @@
   .rec-fab{pointer-events:auto;height:46px;padding:0 28px;border:0;border-radius:23px;background:var(--accent-2);color:#fff;font-size:14px;font-weight:700;cursor:pointer;box-shadow:3px 5px 14px rgba(150,80,110,.3);transition:transform .12s}
   .rec-fab:active{transform:scale(.95)}
   .rec-fab.on{background:#c2607a}
+  .busy{opacity:.55;pointer-events:none;filter:saturate(.7)}
   .set-card.pad{padding:14px}
   .section-title{margin:14px 16px 6px;color:var(--soft);font-size:11px;font-weight:700}
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
@@ -274,12 +275,17 @@
 
   async function rpc(cmd, args){
     var url = "/api/plugins/" + encodeURIComponent(PLUGIN) + "/ui/" + encodeURIComponent(PAGE) + "/actions/rpc";
-    var res = await fetch(url, { method:"POST",
-      headers:{"Content-Type":"application/json","X-Shinsekai-Bridge-Token":TOKEN},
-      body: JSON.stringify({ values:{ cmd: cmd, args: args || {} } }) });
-    if(!res.ok) throw new Error("HTTP " + res.status);
-    var j = await res.json();
-    return (j && j.result) ? j.result : j;
+    var ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+    var to = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, 12000) : null;
+    try {
+      var res = await fetch(url, { method:"POST",
+        headers:{"Content-Type":"application/json","X-Shinsekai-Bridge-Token":TOKEN},
+        body: JSON.stringify({ values:{ cmd: cmd, args: args || {} } }),
+        signal: ctrl ? ctrl.signal : undefined });
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      var j = await res.json();
+      return (j && j.result) ? j.result : j;
+    } finally { if(to) clearTimeout(to); }
   }
 
   var screen = document.getElementById("screen");
@@ -331,7 +337,20 @@
 
   var VIEWS = {};
   var current = { view:"home", arg:null };
-  function go(view, arg){ current = { view:view, arg:arg }; render(); }
+  var navGen = 0;                                  // bumped on every navigation
+  function go(view, arg){ navGen++; current = { view:view, arg:arg }; render(); }
+  // Ignore re-taps while an async handler runs (kills double-fire; shows a busy state).
+  function guard(fn){
+    var busy = false;
+    return async function(ev){
+      if(busy) return;
+      busy = true;
+      var el = ev && ev.currentTarget;
+      if(el && el.classList) el.classList.add("busy");
+      try { await fn(ev); } catch(e){}
+      finally { busy = false; if(el && el.classList) el.classList.remove("busy"); }
+    };
+  }
   async function render(){ try { await (VIEWS[current.view] || VIEWS.home)(current.arg); } catch(e){ fail(e); } }
 
   // ── Home ──
@@ -505,8 +524,9 @@
       try { await rpc("add_contact",{name:nm, stranger:true}); } catch(e){}
       inp.value=""; await load(); go("thread", nm);
     }
-    screen.querySelector("[data-add]").onclick = doAdd;
-    screen.querySelector("#add-name").onkeydown = function(e){ if(e.key==="Enter"){ e.preventDefault(); doAdd(); } };
+    var addGuarded = guard(doAdd);
+    screen.querySelector("[data-add]").onclick = addGuarded;
+    screen.querySelector("#add-name").onkeydown = function(e){ if(e.key==="Enter"){ e.preventDefault(); addGuarded(e); } };
   };
 
   // ── Character settings (per-contact avatar) ──
@@ -609,17 +629,21 @@
     async function doSearch(q){
       render(true);
       var before = JSON.stringify(data.browserResults||[]);
+      var myGen = navGen;
       try { await rpc("browser_search",{query:q}); } catch(e){}
-      for(var i=0;i<12;i++){
-        await new Promise(function(r){ setTimeout(r,2000); });
-        if(current.view!=="browser") return;
+      for(var i=0;i<10;i++){
+        await new Promise(function(r){ setTimeout(r,2500); });
+        if(navGen!==myGen || current.view!=="browser") return;
         var got=null; try { got = await rpc("browser_results"); } catch(e){}
+        if(navGen!==myGen || current.view!=="browser") return;
         if(got && got.results){ var s=JSON.stringify(got.results); if(s!==before){ data.browserResults=got.results; render(false); return; } }
       }
       render(false);   // timed out — leave the current results as they are
     }
-    try { var g0 = await rpc("browser_results"); if(g0&&g0.results) data.browserResults = g0.results; } catch(e){}
-    render(false);
+    render(false);   // paint immediately; stored results fill in async
+    (async function(){ var myGen = navGen;
+      try { var g0 = await rpc("browser_results"); if(g0 && g0.results && navGen===myGen && current.view==="browser"){ data.browserResults = g0.results; render(false); } } catch(e){}
+    })();
   };
 
   // ── Moments ──
@@ -643,36 +667,47 @@
         '<div class="scroll">'+(cards || '<div class="empty">还没有动态。<br><small>点右上角 ＋ 发一条,或等角色更新。</small></div>')+
         '<div style="height:16px"></div></div>';
       wireBack();
-      screen.querySelector("[data-post]").onclick = doPost;
-      screen.querySelectorAll("[data-like]").forEach(function(el){ el.onclick = function(){ doLike(el.getAttribute("data-like")); }; });
-      screen.querySelectorAll("[data-cmt]").forEach(function(el){ el.onclick = function(){ doComment(el.getAttribute("data-cmt")); }; });
+      screen.querySelector("[data-post]").onclick = guard(doPost);
+      screen.querySelectorAll("[data-like]").forEach(function(el){ el.onclick = guard(function(){ return doLike(el.getAttribute("data-like")); }); });
+      screen.querySelectorAll("[data-cmt]").forEach(function(el){ el.onclick = guard(function(){ return doComment(el.getAttribute("data-cmt")); }); });
     }
+    function me(){ return data.player || "我"; }
     async function doPost(){
       var t = await askText({title:"发朋友圈", placeholder:"分享点什么…", multi:true, max:280});
       if(!t) return;
       try { await rpc("post_moment",{text:t}); } catch(e){}
-      await load(); render();
+      try { var g = await rpc("moments"); if(g&&g.posts) data.moments = g.posts; } catch(e){}   // refetch moments only (not everything)
+      render();
     }
-    async function doLike(id){
-      try { await rpc("moment_like",{post_id:id}); } catch(e){}
-      await load(); render();
+    function doLike(id){   // optimistic: reflect instantly, reconcile via poll (server dedups)
+      (data.moments||[]).forEach(function(p){
+        if(String(p.id)===String(id)){ p.likes = p.likes||[]; if(p.likes.indexOf(me())<0) p.likes.push(me()); }
+      });
+      render();
+      return rpc("moment_like",{post_id:id}).catch(function(){});
     }
     async function doComment(id){
       var t = await askText({title:"评论", placeholder:"说点什么…", max:200});
       if(!t) return;
-      try { await rpc("moment_comment",{post_id:id, text:t}); } catch(e){}
-      await load(); render();
+      (data.moments||[]).forEach(function(p){
+        if(String(p.id)===String(id)){ p.comments = p.comments||[]; p.comments.push({author:me(), text:t, replyTo:""}); }
+      });
+      render();
+      rpc("moment_comment",{post_id:id, text:t}).catch(function(){});
     }
     render();
     // characters react asynchronously (LLM comment/like tools) — poll briefly and re-render
-    (async function(){
-      var seen = JSON.stringify(data.moments||[]);
-      for(var i=0;i<12;i++){
-        await new Promise(function(r){ setTimeout(r,2000); });
-        if(current.view!=="moments") break;
-        var got=null; try { got = await rpc("moments"); } catch(e){}
-        if(got && got.posts){ var s=JSON.stringify(got.posts); if(s!==seen){ seen=s; data.moments=got.posts; render(); } }
-      }
+    (function(){
+      var myGen = navGen, seen = JSON.stringify(data.moments||[]);
+      (async function(){
+        for(var i=0;i<10;i++){
+          await new Promise(function(r){ setTimeout(r,2500); });
+          if(navGen!==myGen || current.view!=="moments") break;
+          var got=null; try { got = await rpc("moments"); } catch(e){}
+          if(navGen!==myGen || current.view!=="moments") break;
+          if(got && got.posts){ var s=JSON.stringify(got.posts); if(s!==seen){ seen=s; data.moments=got.posts; render(); } }
+        }
+      })();
     })();
   };
 
@@ -759,13 +794,13 @@
       el.classList.toggle("on", picks[n]);
       el.querySelector(".cg-check").textContent = picks[n] ? "✓" : "";
     }; });
-    screen.querySelector("[data-create]").onclick = async function(){
+    screen.querySelector("[data-create]").onclick = guard(async function(){
       var name = (screen.querySelector("#cg-name").value||"").trim();
       if(!name){ screen.querySelector("#cg-name").focus(); return; }
       var members = Object.keys(picks).filter(function(n){ return picks[n]; });
       try { await rpc("create_group", {name:name, members:members}); } catch(e){}
       await load(); go("groups", null);
-    };
+    });
   };
 
   VIEWS.group = async function(name){
@@ -884,8 +919,6 @@
   };
   VIEWS.voice = async function(){
     var memos = [], st = {active:false, elapsed:0, captured:0}, pollTimer = null, audioEl = null;
-    try { var l = await rpc("rec_list"); memos = (l&&l.memos)||[]; } catch(e){}
-    try { var s0 = await rpc("rec_status"); if(s0) st = s0; } catch(e){}
     function fmt(sec){ sec=Math.max(0,sec|0); return Math.floor(sec/60)+":"+String(sec%60).padStart(2,"0"); }
     function liveHTML(){ return '<span class="rec-dot"></span>正在录音 '+fmt(st.elapsed)+' · 已捕获 '+st.captured+' 段'; }
     function render(){
@@ -900,7 +933,7 @@
         '<div class="list">'+list+'</div><div style="height:84px"></div></div>'+
         '<div class="rec-fabwrap"><button class="rec-fab'+(st.active?" on":"")+'" id="rec-btn">'+(st.active?"⏹ 停止":"⏺ 开始录音")+'</button></div>';
       wireBack();
-      screen.querySelector("#rec-btn").onclick = toggle;
+      screen.querySelector("#rec-btn").onclick = guard(toggle);
       screen.querySelectorAll("[data-play]").forEach(function(el){ el.onclick = function(){ play(el.getAttribute("data-play")); }; });
       screen.querySelectorAll("[data-del]").forEach(function(el){ el.onclick = async function(){
         var id = el.getAttribute("data-del");
@@ -920,22 +953,25 @@
         st.active=true; st.elapsed=0; st.captured=0; render(); startPoll();
       }
     }
-    function startPoll(){ stopPoll(); pollTimer = setInterval(async function(){
-      if(current.view!=="voice"){ stopPoll(); return; }
+    function startPoll(){ stopPoll(); var myGen = navGen; pollTimer = setInterval(async function(){
+      if(navGen!==myGen || current.view!=="voice"){ stopPoll(); return; }
       var s=null; try { s = await rpc("rec_status"); } catch(e){}
       if(!s) return;
       st.active=s.active; st.elapsed=s.elapsed; st.captured=s.captured;
       var live = screen.querySelector(".rec-live");
       if(st.active){ if(live) live.innerHTML = liveHTML(); }
       else { stopPoll(); render(); }
-    }, 1000); }
+    }, 1500); }
     function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
     async function play(id){
       var r=null; try { r = await rpc("rec_audio",{id:id}); } catch(e){}
       if(r && r.data){ if(!audioEl) audioEl = new Audio(); audioEl.src = r.data; audioEl.play().catch(function(){}); }
     }
-    render();
-    if(st.active) startPoll();
+    render();   // paint immediately; recordings + status fill in async
+    (async function(){ var myGen = navGen;
+      try { var l = await rpc("rec_list"); if(l && l.memos && navGen===myGen && current.view==="voice"){ memos = l.memos; render(); } } catch(e){}
+      try { var s0 = await rpc("rec_status"); if(s0 && navGen===myGen && current.view==="voice"){ st.active=s0.active; st.elapsed=s0.elapsed; st.captured=s0.captured; if(st.active){ render(); startPoll(); } } } catch(e){}
+    })();
   };
 
   // status bar: clock + battery

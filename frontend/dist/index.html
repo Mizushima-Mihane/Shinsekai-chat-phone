@@ -407,6 +407,16 @@
         : '<div class="empty">和 '+esc(name)+' 说点什么吧。</div>');
       box.scrollTop = box.scrollHeight;
     }
+    var unknownAtOpen = isUnknown(name);
+    function refreshIdentity(){  // reveal 未知联系人 → real name + avatar once exchanged
+      var head = screen.querySelector(".app-head");
+      if(head){
+        var av = head.querySelector(".av"); if(av) av.outerHTML = avatar(name, true);
+        var b = head.querySelector("b"); if(b) b.textContent = disp(name);
+      }
+      var ci = screen.querySelector("#ci"); if(ci) ci.placeholder = "发短信给 "+disp(name);
+      draw();
+    }
     if(!data.messages)data.messages={}; msgs = data.messages[name] || (data.messages[name] = []);
     draw();
     // After sending, the character's reply lands async in messages.json — poll the
@@ -420,10 +430,19 @@
           if(current.view!=="thread" || current.arg!==name) break;   // navigated away
           var got=null; try { got = await rpc("thread",{name:name}); } catch(e){}
           var arr = got && got.messages;
-          if(arr && arr.length > msgs.length){
+          var newMsgs = arr && arr.length > msgs.length;
+          if(newMsgs){
             msgs.length = 0;
             arr.forEach(function(m){ msgs.push({text:m.text, isUser:m.isUser}); });
-            data.messages[name] = msgs; draw();
+            data.messages[name] = msgs;
+          }
+          if(got && got.unknown === false && unknownAtOpen){
+            // exchange_contacts fired mid-thread → reveal real name + avatar live
+            unknownAtOpen = false;
+            data.unknown = (data.unknown||[]).filter(function(x){ return String(x) !== String(name); });
+            refreshIdentity();
+          } else if(newMsgs){
+            draw();
           }
         }
       } finally { polling = false; }

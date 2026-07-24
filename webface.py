@@ -953,7 +953,8 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "threads":
             return {"threads": _threads()}
         if cmd == "thread":
-            return {"name": args.get("name", ""), "messages": _thread(str(args.get("name", "")))}
+            _tn = str(args.get("name", ""))
+            return {"name": args.get("name", ""), "messages": _thread(_tn), "unknown": (_tn in _unknown())}
         if cmd == "contacts":
             return {"contacts": _contacts()}
         if cmd == "moments":

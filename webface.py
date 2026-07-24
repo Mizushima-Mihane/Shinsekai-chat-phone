@@ -622,7 +622,6 @@ def _all() -> dict[str, Any]:
         "messages": messages,
         "contacts": _contacts(),
         "unknown": _unknown(),
-        "avatars": _avatars(),
         "moments": _moments(),
         "groups": _groups(),
         "calls": _call_log(),
@@ -1010,6 +1009,8 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return _rec_audio(args.get("id"))
         if cmd == "settings":
             return _settings()
+        if cmd == "avatars":
+            return {"avatars": _avatars()}
         if cmd == "set_profile":
             _write_prefs({"player_name": (str(args.get("name", "")).strip() or "我"), "signature": str(args.get("signature", "") or "")})
             return {"ok": True}

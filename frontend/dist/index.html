@@ -295,7 +295,14 @@
 
   var screen = document.getElementById("screen");
   var data = {};
-  async function load(){ try { data = await rpc("all"); } catch(e){ data = {}; } }
+  var avatarsCache = {};   // uploaded avatars (base64) — fetched once, kept out of every load()
+  async function load(){
+    try { data = await rpc("all"); } catch(e){ data = {}; }
+    data.avatars = avatarsCache;                      // reattach cached avatars (all() no longer ships them)
+  }
+  async function loadAvatars(){
+    try { var a = await rpc("avatars"); if(a && a.avatars){ avatarsCache = a.avatars; data.avatars = avatarsCache; } } catch(e){}
+  }
 
   function header(title){
     return '<div class="app-head"><button class="hbtn" data-home>‹</button><b>'+esc(title)+'</b><span class="hbtn"></span></div>';
@@ -1094,10 +1101,17 @@
     }
   }, true);
 
-  load().then(function(){
-    if(CALL.name){ current = { view: (CALL.dir==="outgoing" ? "inCall" : "incomingCall"), arg: CALL }; }
-    render();
-  });
+  // Paint the home grid (or an incoming/outgoing call) instantly; data + avatars fill in after.
+  if(CALL.name){ current = { view: (CALL.dir==="outgoing" ? "inCall" : "incomingCall"), arg: CALL }; }
+  data.avatars = avatarsCache;
+  render();
+  function fillRender(){
+    if(current.view==="inCall" || current.view==="incomingCall") return;  // never disturb a live call
+    navGen++;                                                             // retire any poll from the boot window
+    render();                                                             // re-render current view with loaded data
+  }
+  load().then(fillRender);        // main data (now without the heavy avatar blob)
+  loadAvatars().then(fillRender); // avatars fetched separately, just once
   // host says the character hung up (call.ended) -> close the call screen
   window.addEventListener("message", function(e){
     var d = e.data;

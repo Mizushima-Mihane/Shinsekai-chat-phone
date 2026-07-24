@@ -168,12 +168,40 @@ class ProactiveCore:
             except Exception:
                 logger.debug("proactive tick failed", exc_info=True)
 
+    def _live_prefs(self) -> tuple:
+        """Re-read the on-disk knobs the bridge writes, so React 设置 changes take
+        effect on the next tick with no cross-process signaling.
+
+        Returns (enabled: bool, scale: float, dnd: bool).
+        """
+        from pathlib import Path
+        import json as _json
+        from plugins.shinsekai_chat_phone import phone_core
+        enabled, scale, dnd = True, 1.0, False
+        try:
+            fp = Path("data/plugins/com.shinsekai.chat_phone/freq_config.json")
+            if fp.exists():
+                fc = _json.loads(fp.read_text(encoding="utf-8")) or {}
+                enabled = bool(fc.get("_enabled", True))
+                scale = float(fc.get("_scale", 1.0) or 1.0)
+        except Exception:
+            pass
+        try:
+            sp = phone_core.session_dir() / "phone_session.json"
+            if sp.exists():
+                sess = _json.loads(sp.read_text(encoding="utf-8")) or {}
+                dnd = bool(sess.get("dnd", False))
+        except Exception:
+            pass
+        return enabled, scale, dnd
+
     # ── the decision tick ─────────────────────────────────────────────
     def _tick(self) -> None:
         from plugins.shinsekai_chat_phone import phone_core
-        fc_all = self._freq_config or {}
-        if not fc_all.get("_enabled", True):
+        enabled, scale, dnd = self._live_prefs()
+        if not enabled:
             return
+        fc_all = self._freq_config or {}
         contacts = phone_core.contacts_list()
         if not contacts:
             return
@@ -192,6 +220,8 @@ class ProactiveCore:
             # Moments: independent low-freq roll, unaffected by scene / no-double-text.
             if self._maybe_post_moment(name):
                 continue
+            if dnd:
+                continue  # 勿扰: suppress proactive SMS (ambient moments still allowed)
             if name in scene:
                 continue  # face-to-face — say it in person, don't text
             try:
@@ -205,7 +235,7 @@ class ProactiveCore:
             if not yandere and last is not None and not last.get("is_user"):
                 continue
             fc = fc_all.get(name, {}) or {}
-            sms_base = fc.get("sms", 0.1)
+            sms_base = fc.get("sms", 0.1) * scale
             if yandere:
                 sms_base = min(sms_base * 2.5, 0.8)
             urge = self._urge.get(name, 0.0) + random.uniform(0, sms_base * 2)

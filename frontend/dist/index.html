@@ -162,6 +162,9 @@
   .moment .cmts div{padding:6px 0;font-size:12.5px;line-height:1.5;border-bottom:1px solid rgba(203,196,212,.35)}
   .moment .cmts div:last-child{border-bottom:0}
   .moment .cmts b{color:var(--accent-ink)}
+  .moment-acts{display:flex;gap:8px;margin-top:12px}
+  .mact{flex:1;height:32px;border:0;border-radius:10px;background:#efe7ec;color:var(--accent-2);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s}
+  .mact:active{transform:scale(.96);background:#eadbe1}
 
   /* ── Settings ── */
   .settings{padding:14px}
@@ -172,6 +175,27 @@
   .set-row b{font-size:13px;display:flex;align-items:center;gap:7px}
   .set-row .sw{width:14px;height:14px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
   .set-note{margin:6px 6px;color:var(--muted);font-size:11.5px;line-height:1.6;text-align:center}
+  .set-sub{margin-top:8px;color:var(--muted);font-size:11px;line-height:1.5}
+  .freq-row{display:flex;gap:6px}
+  .freq-opt{flex:1;height:34px;border:0;border-radius:11px;background:#efe7ec;color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s,background .15s,color .15s}
+  .freq-opt:active{transform:scale(.95)}
+  .freq-opt.on{background:var(--accent-2);color:#fff}
+  .br-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
+  .br-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
+  .br-q{margin:12px 14px 4px;color:var(--soft);font-size:12px;font-weight:700}
+  .br-item{margin:8px 14px;padding:14px;border-radius:14px;background:var(--card);box-shadow:2px 3px 9px rgba(105,77,98,.08),-2px -2px 7px rgba(255,255,255,.6)}
+  .br-item b{font-size:14px;color:var(--accent-ink);line-height:1.4}
+  .br-site{display:inline-block;margin-left:6px;color:var(--muted);font-size:10.5px;font-weight:400}
+  .br-item p{margin:7px 0 0;font-size:12.5px;line-height:1.6;color:var(--soft)}
+  .br-loading{margin:16px;text-align:center;color:var(--muted);font-size:12px}
+  .music-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding:34px 24px}
+  .music-art{width:120px;height:120px;border-radius:28px;display:grid;place-items:center;font-size:52px;color:#8a7ea0;background:linear-gradient(135deg,#e7e0f0,#f1e4ec);box-shadow:5px 7px 18px rgba(105,77,98,.16),-3px -3px 10px rgba(255,255,255,.7)}
+  .music-hint{margin-top:6px;color:var(--soft);font-size:13px;font-weight:600}
+  .music-path{max-width:100%;word-break:break-all;color:var(--muted);font-size:11px;text-align:center;line-height:1.5}
+  .music-wrap .primary-btn{width:100%;margin-top:6px}
+  .ghost-btn{width:100%;height:40px;border:0;border-radius:13px;background:transparent;color:var(--accent-2);font-size:13px;font-weight:600;cursor:pointer;transition:transform .1s}
+  .ghost-btn:active{transform:scale(.97)}
+  .primary-btn[disabled]{opacity:.5;pointer-events:none}
   .set-card.pad{padding:14px}
   .section-title{margin:14px 16px 6px;color:var(--soft);font-size:11px;font-weight:700}
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
@@ -267,7 +291,7 @@
         '<div class="ask-btns"><button class="ask-b cancel">取消</button><button class="ask-b ok">'+esc(o.ok||"确定")+'</button></div></div>';
       screen.appendChild(ov);
       requestAnimationFrame(function(){ ov.classList.add("on"); });
-      var inp = ov.querySelector(".ask-in"); setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 60);
+      var inp = ov.querySelector(".ask-in"); if(o.value!=null) inp.value = o.value; setTimeout(function(){ try{ inp.focus(); inp.select&&inp.select(); }catch(e){} }, 60);
       function close(v){ ov.classList.remove("on"); setTimeout(function(){ ov.remove(); }, 180); resolve(v); }
       ov.querySelector(".cancel").onclick = function(){ close(null); };
       ov.querySelector(".ok").onclick = function(){ close((inp.value||"").trim() || null); };
@@ -529,29 +553,96 @@
 
   // ── Browser ──
   VIEWS.browser = async function(){
-    var history = data.browser || [];
-    var rows = history.map(function(q){
-      return '<div class="row"><span class="av sm">◎</span><span class="grow"><b>'+esc(q)+'</b><small>搜索记录</small></span></div>';
-    }).join("");
-    screen.innerHTML = header("浏览器") + '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有浏览记录。<br><small>搜索需要角色在线,后续接入。</small></div>')+'</div>';
-    wireBack();
+    function resultsHTML(sets){
+      var latest = (sets && sets.length) ? sets[0] : null;
+      if(!latest) return '<div class="empty">输入关键词开始搜索。<br><small>搜索结果由这个世界的“搜索引擎”即时生成。</small></div>';
+      var items = (latest.results||[]).map(function(r){
+        return '<div class="br-item"><b>'+esc(r.title||"")+'</b>'+
+          (r.site?'<span class="br-site">'+esc(r.site)+'</span>':'')+
+          (r.snippet?'<p>'+esc(r.snippet)+'</p>':'')+'</div>';
+      }).join("");
+      return '<div class="br-q">🔍 '+esc(latest.query||"")+'</div>'+(items || '<div class="empty">没有结果。</div>');
+    }
+    function render(searching){
+      screen.innerHTML = header("浏览器") +
+        '<div class="br-bar"><input id="br-in" placeholder="搜索点什么…" autocomplete="off" maxlength="60">'+
+        '<button class="add-go" data-go type="button">搜索</button></div>'+
+        '<div class="scroll">'+(searching?'<div class="br-loading">正在搜索…</div>':'')+
+        resultsHTML(data.browserResults)+'<div style="height:12px"></div></div>';
+      wireBack();
+      var inp = screen.querySelector("#br-in");
+      function run(){ var q=(inp.value||"").trim(); if(!q){ inp.focus(); return; } doSearch(q); }
+      screen.querySelector("[data-go]").onclick = run;
+      inp.onkeydown = function(e){ if(e.key==="Enter"){ e.preventDefault(); run(); } };
+    }
+    async function doSearch(q){
+      render(true);
+      var before = JSON.stringify(data.browserResults||[]);
+      try { await rpc("browser_search",{query:q}); } catch(e){}
+      for(var i=0;i<12;i++){
+        await new Promise(function(r){ setTimeout(r,2000); });
+        if(current.view!=="browser") return;
+        var got=null; try { got = await rpc("browser_results"); } catch(e){}
+        if(got && got.results){ var s=JSON.stringify(got.results); if(s!==before){ data.browserResults=got.results; render(false); return; } }
+      }
+      render(false);   // timed out — leave the current results as they are
+    }
+    try { var g0 = await rpc("browser_results"); if(g0&&g0.results) data.browserResults = g0.results; } catch(e){}
+    render(false);
   };
 
   // ── Moments ──
   VIEWS.moments = async function(){
-    var posts = data.moments || [];
-    var cards = posts.map(function(p){
+    function cardHTML(p){
       var likes = (p.likes&&p.likes.length) ? '<div class="likes">♡ '+p.likes.map(esc).join("，")+'</div>' : '';
       var cmts = (p.comments&&p.comments.length) ? '<div class="cmts">'+p.comments.map(function(c){
-        return '<div><b>'+esc(c.author)+'</b>：'+esc(c.text)+'</div>'; }).join("")+'</div>' : '';
+        var head = c.replyTo ? esc(c.author)+' 回复 '+esc(c.replyTo) : esc(c.author);
+        return '<div class="cmt"><b>'+head+'</b>：'+esc(c.text)+'</div>'; }).join("")+'</div>' : '';
       var img = p.imageDesc ? '<div class="imgdesc">🖼 '+esc(p.imageDesc)+'</div>' : '';
       return '<article class="moment"><div class="who">'+avatar(p.author)+'<div><b>'+esc(p.author)+
         '</b><small>动态</small></div></div>'+(p.text?'<p>'+esc(p.text)+'</p>':'')+img+
-        ((likes||cmts)?'<hr>':'')+likes+cmts+'</article>';
-    }).join("");
-    screen.innerHTML = header("朋友圈") + '<div class="scroll">'+(cards || '<div class="empty">还没有动态。</div>')+'<div style="height:16px"></div></div>';
-    wireBack();
+        ((likes||cmts)?'<hr>':'')+likes+cmts+
+        '<div class="moment-acts"><button class="mact" data-like="'+esc(String(p.id))+'">♡ 赞</button>'+
+        '<button class="mact" data-cmt="'+esc(String(p.id))+'">💬 评论</button></div></article>';
+    }
+    function render(){
+      var cards = (data.moments||[]).map(cardHTML).join("");
+      screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>朋友圈</b>'+
+        '<button class="hbtn" data-post aria-label="发动态">＋</button></div>'+
+        '<div class="scroll">'+(cards || '<div class="empty">还没有动态。<br><small>点右上角 ＋ 发一条,或等角色更新。</small></div>')+
+        '<div style="height:16px"></div></div>';
+      wireBack();
+      screen.querySelector("[data-post]").onclick = doPost;
+      screen.querySelectorAll("[data-like]").forEach(function(el){ el.onclick = function(){ doLike(el.getAttribute("data-like")); }; });
+      screen.querySelectorAll("[data-cmt]").forEach(function(el){ el.onclick = function(){ doComment(el.getAttribute("data-cmt")); }; });
+    }
+    async function doPost(){
+      var t = await askText({title:"发朋友圈", placeholder:"分享点什么…", multi:true, max:280});
+      if(!t) return;
+      try { await rpc("post_moment",{text:t}); } catch(e){}
+      await load(); render();
+    }
+    async function doLike(id){
+      try { await rpc("moment_like",{post_id:id}); } catch(e){}
+      await load(); render();
+    }
+    async function doComment(id){
+      var t = await askText({title:"评论", placeholder:"说点什么…", max:200});
+      if(!t) return;
+      try { await rpc("moment_comment",{post_id:id, text:t}); } catch(e){}
+      await load(); render();
+    }
+    render();
+    // characters react asynchronously (LLM comment/like tools) — poll briefly and re-render
+    (async function(){
+      var seen = JSON.stringify(data.moments||[]);
+      for(var i=0;i<12;i++){
+        await new Promise(function(r){ setTimeout(r,2000); });
+        if(current.view!=="moments") break;
+        var got=null; try { got = await rpc("moments"); } catch(e){}
+        if(got && got.posts){ var s=JSON.stringify(got.posts); if(s!==seen){ seen=s; data.moments=got.posts; render(); } }
+      }
+    })();
   };
 
   // ── Settings (editable) ──
@@ -569,9 +660,13 @@
         '<button class="primary-btn" id="s-save">保存资料</button></div>'+
       '<div class="section-title">勿扰</div><div class="set-card"><div class="set-row"><span>勿扰模式</span>'+
         '<button class="toggle'+(s.dnd?" on":"")+'" id="s-dnd" role="switch" aria-checked="'+(s.dnd?"true":"false")+'"><i></i></button></div></div>'+
+      '<div class="section-title">主动联系</div><div class="set-card pad"><div class="freq-row">'+
+        ["关闭","低频","正常","高频"].map(function(lbl,idx){
+          return '<button class="freq-opt'+(((s.proactiveLevel==null?2:s.proactiveLevel))===idx?" on":"")+'" data-freq="'+idx+'" type="button">'+lbl+'</button>';
+        }).join("")+'</div><div class="set-sub">角色主动给你发短信 / 更新朋友圈的频率。</div></div>'+
       '<div class="section-title">主题色</div><div class="set-card pad"><div class="swatches">'+sw+'</div></div>'+
       ((s.hacked&&s.hacked.length)?'<div class="section-title">监控</div><div class="set-card"><div class="set-row"><span>被监控</span><b>'+s.hacked.map(esc).join("、")+'</b></div></div>':'')+
-      '<div class="set-note">主动联系频率(管理员模式)接入中;勿扰/主题的实时生效待 route C。</div>'+
+      '<div class="set-note">勿扰与主动联系频率会在角色下一次检查(约 1 分钟内)生效。</div>'+
       '<div style="height:14px"></div></div>';
     wireBack();
     var save = screen.querySelector("#s-save");
@@ -584,6 +679,10 @@
     screen.querySelectorAll("[data-theme]").forEach(function(el){ el.onclick=function(){
       screen.querySelectorAll("[data-theme]").forEach(function(x){ x.classList.remove("sel"); }); el.classList.add("sel");
       rpc("set_theme",{theme:el.getAttribute("data-theme")}); };
+    });
+    screen.querySelectorAll("[data-freq]").forEach(function(el){ el.onclick=function(){
+      screen.querySelectorAll("[data-freq]").forEach(function(x){ x.classList.remove("on"); }); el.classList.add("on");
+      rpc("set_freq",{level:parseInt(el.getAttribute("data-freq"),10)}); };
     });
   };
 
@@ -724,7 +823,34 @@
     };
   };
 
-  VIEWS.music = stub("音乐");
+  VIEWS.music = async function(){
+    var path = "";
+    try { var g = await rpc("music_status"); path = (g&&g.path)||""; } catch(e){}
+    function render(){
+      screen.innerHTML = header("音乐") + '<div class="scroll"><div class="music-wrap">'+
+        '<div class="music-art">♪</div>'+
+        '<div class="music-hint">'+(path ? "已绑定本地播放器" : "还没有绑定本地播放器")+'</div>'+
+        (path ? '<div class="music-path">'+esc(path)+'</div>' : '')+
+        '<button class="primary-btn" id="m-open"'+(path?"":" disabled")+'>打开音乐播放器</button>'+
+        '<button class="ghost-btn" id="m-set">'+(path?"更换播放器路径":"设置播放器路径")+'</button>'+
+        '</div></div>';
+      wireBack();
+      var open = screen.querySelector("#m-open");
+      if(open && path) open.onclick = async function(){
+        open.textContent = "正在打开…";
+        var r=null; try { r = await rpc("music_launch"); } catch(e){}
+        open.textContent = (r&&r.ok) ? "已打开 ✓" : ((r&&r.error==="not_found") ? "路径无效,请重设" : "打开失败");
+        setTimeout(function(){ open.textContent = "打开音乐播放器"; }, 1600);
+      };
+      screen.querySelector("#m-set").onclick = async function(){
+        var p = await askText({title:"播放器路径", placeholder:"播放器 exe 的完整路径", value:path, max:260});
+        if(p==null) return;
+        try { await rpc("music_set_path",{path:p}); } catch(e){}
+        path = p; render();
+      };
+    }
+    render();
+  };
   VIEWS.voice = stub("录音");
 
   // status bar: clock + battery

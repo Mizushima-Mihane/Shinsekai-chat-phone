@@ -514,6 +514,97 @@ def moment_get_posts() -> list:
     return list(_load_moments()["posts"])
 
 
+# ── Browser (浏览器) — player searches + LLM-generated result pages ─────
+
+def add_browser_history(query: str) -> bool:
+    """Record a player search query (newest-first, capped). Feeds monitoring intel."""
+    query = (query or "").strip()
+    if not query:
+        return False
+    with _lock:
+        path = session_dir() / "browser_history.json"
+        data = _read_json(path, [])
+        if not isinstance(data, list):
+            data = []
+        data.insert(0, query)
+        _write_json(path, data[:100])
+    return True
+
+
+def save_browser_results(query: str, results) -> bool:
+    """Store an LLM-generated search-result set for a query (newest-first, capped)."""
+    query = (query or "").strip()
+    if not query:
+        return False
+    clean: list = []
+    for r in (results or []):
+        if isinstance(r, dict):
+            title = str(r.get("title", "") or "").strip()
+            snippet = str(r.get("snippet", "") or r.get("desc", "") or "").strip()
+            site = str(r.get("site", "") or r.get("source", "") or "").strip()
+        else:
+            title, snippet, site = str(r).strip(), "", ""
+        if title or snippet:
+            clean.append({"title": title, "snippet": snippet, "site": site})
+    with _lock:
+        path = session_dir() / "browser_results.json"
+        data = _read_json(path, [])
+        if not isinstance(data, list):
+            data = []
+        data.insert(0, {"query": query, "results": clean, "ts": time.time()})
+        _write_json(path, data[:20])
+    return True
+
+
+def get_browser_results() -> list:
+    """All stored search-result sets, newest first."""
+    data = _read_json(session_dir() / "browser_results.json", [])
+    return data if isinstance(data, list) else []
+
+
+# ── Music — launch the player's own local media app (Qt-free) ──────────
+
+def get_music_path() -> str:
+    """Configured local music-player exe path (byte-compatible with music_app)."""
+    cfg = Path("data/plugins/com.shinsekai.chat_phone/music_config.json")
+    try:
+        if cfg.is_file():
+            return str(json.loads(cfg.read_text(encoding="utf-8")).get("exe_path", "") or "")
+    except Exception:
+        pass
+    return ""
+
+
+def set_music_path(path: str) -> None:
+    """Persist the local music-player exe path."""
+    path = (path or "").strip()
+    cfg = Path("data/plugins/com.shinsekai.chat_phone/music_config.json")
+    try:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps({"exe_path": path}, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def launch_music() -> tuple:
+    """Launch the configured local music player. Returns (ok: bool, message: str)."""
+    import os
+    exe = get_music_path()
+    if not exe:
+        return False, "no_path"
+    if not os.path.exists(exe):
+        return False, "not_found"
+    try:
+        if os.name == "nt":
+            os.startfile(exe)  # user-configured local app
+        else:
+            import subprocess
+            subprocess.Popen([exe])
+        return True, "ok"
+    except Exception:
+        return False, "error"
+
+
 # ── Readers + proactive queue (for the Qt-free proactive monitor) ──────
 
 def contacts_list() -> list:

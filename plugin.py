@@ -328,6 +328,44 @@ def like_moment(post_id: str, character_name: str) -> str:
     return ""
 
 
+@tool(
+    name="browser_result",
+    group="default",
+    description=(
+        "为玩家的一次浏览器搜索生成搜索结果页。当用户消息以[浏览器]开头时调用："
+        "你此刻是这个世界的搜索引擎，不是角色本人。query 传玩家搜索的关键词；"
+        "results 传一个 JSON 数组（4-6 条），每项包含 title（标题）、snippet（摘要）、"
+        "site（来源站点，可选）三个字段。结果要具体、有细节、够劲爆吸睛（八卦、猛料、反转、"
+        "都市传说皆可），可结合当前剧情与相关角色，让玩家有一探究竟的欲望。只调用本工具，不要输出对话或旁白。"
+    ),
+)
+def browser_result(query: str, results: str = "") -> str:
+    import json as _json
+    parsed: list = []
+    raw = results
+    if isinstance(raw, list):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = _json.loads(raw)
+        except Exception:
+            for line in raw.splitlines():
+                line = line.strip().lstrip("-•*0123456789. ").strip()
+                if not line:
+                    continue
+                sep = "::" if "::" in line else ("|" if "|" in line else "")
+                if sep:
+                    _t, _s = line.split(sep, 1)
+                    parsed.append({"title": _t.strip(), "snippet": _s.strip()})
+                else:
+                    parsed.append({"title": line, "snippet": ""})
+    if not isinstance(parsed, list):
+        parsed = []
+    from plugins.shinsekai_chat_phone import phone_core
+    ok = phone_core.save_browser_results(query, parsed)
+    return f"已生成 {len(parsed)} 条搜索结果。" if ok else "搜索结果生成失败。"
+
+
 # ── LLM tool: bug character's phone ────────────────────────────────────
 
 @tool(
@@ -1286,6 +1324,15 @@ def _on_before_chat(ctx) -> None:
                         + "；".join(_moment_lines) + "。")
         except Exception:
             pass
+        # ── Browser (浏览器) protocol ──
+        msg += (
+            " [浏览器] 当用户消息以[浏览器]开头时，玩家在手机浏览器里做了一次搜索。"
+            "此刻你要扮演这个世界的“搜索引擎”，而不是任何角色——调用 browser_result 工具，"
+            "为这次搜索返回 4-6 条结果：query 传搜索词，results 传一个 JSON 数组，"
+            "每项包含 title（标题）、snippet（摘要）、site（来源站点，可选）三个字段。"
+            "结果要具体、有细节、够劲爆吸睛，可结合当前剧情与相关角色制造猛料、八卦或反转，"
+            "勾起玩家继续深挖的欲望。本轮除该工具调用外，不要输出任何台词或旁白。"
+        )
         # Sync proactive SMS the character sent on their own — so the main story
         # knows about them. Consume (clear) the queue after injecting.
         try:

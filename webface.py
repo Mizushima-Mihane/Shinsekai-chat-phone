@@ -183,12 +183,86 @@ def _moments() -> list[dict[str, Any]]:
             "imageDesc": p.get("image_desc"),
             "likes": [disp(x) for x in (p.get("likes") or [])],
             "comments": [
-                {"author": disp(str(c.get("author", ""))), "text": str(c.get("text", ""))}
+                {"author": disp(str(c.get("author", ""))), "text": str(c.get("text", "")),
+                 "replyTo": disp(str(c.get("reply_to", "") or ""))}
                 for c in (p.get("comments") or [])
             ],
             "ts": p.get("ts"),
         })
     return out
+
+
+def _coerce_int(v: Any) -> int:
+    """Best-effort int from an id that may arrive as '#3', '3', or 3."""
+    try:
+        return int(str(v).strip().lstrip("#") or 0)
+    except Exception:
+        return 0
+
+
+def _post_moment(text: str, image_desc: str = "") -> dict[str, Any]:
+    """Player publishes a moment, then nudges characters to react via their LLM tools."""
+    text = (text or "").strip()
+    image_desc = (image_desc or "").strip()
+    if not text and not image_desc:
+        return {"ok": False, "error": "empty"}
+    pid = 0
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        pid = phone_core.moment_add_post(_player_name(), text, image_desc, is_user=True)
+    except Exception:
+        logger.debug("post_moment failed", exc_info=True)
+    try:
+        import threading
+        img = f"（配图：{image_desc}）" if image_desc else ""
+        runtime_text = (f'[朋友圈] 玩家发布了一条新动态（#{pid}）：“{text}”{img}。'
+                        f'请让通讯录里合适的角色用 comment_moment / like_moment 工具自然地评论或点赞，'
+                        f'角色之间也可以互相接话；不要输出对话。')
+        threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
+                         daemon=True, name="phone-moment-trigger").start()
+    except Exception:
+        pass
+    return {"ok": bool(pid), "id": pid}
+
+
+def _moment_comment(post_id: Any, text: str, reply_to: str = "") -> dict[str, Any]:
+    """Player comments on a moment, then nudges the addressed character to reply."""
+    text = (text or "").strip()
+    reply_to = (reply_to or "").strip()
+    pid = _coerce_int(post_id)
+    if not text or not pid:
+        return {"ok": False, "error": "empty"}
+    cid = None
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        cid = phone_core.moment_add_comment(pid, _player_name(), text, is_user=True, reply_to=reply_to)
+    except Exception:
+        logger.debug("moment_comment failed", exc_info=True)
+    try:
+        import threading
+        tgt = f"，回复的是 {reply_to}" if reply_to else ""
+        runtime_text = (f'[朋友圈] 玩家在动态 #{pid} 下发表了评论：“{text}”{tgt}。'
+                        f'若这条评论是冲着某个角色说的，请让该角色用 comment_moment(编号,角色,内容,reply_to=玩家) 回复；'
+                        f'不要输出对话。')
+        threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
+                         daemon=True, name="phone-moment-trigger").start()
+    except Exception:
+        pass
+    return {"ok": bool(cid), "id": cid}
+
+
+def _moment_like(post_id: Any) -> dict[str, Any]:
+    """Player likes a moment (no runtime turn needed)."""
+    pid = _coerce_int(post_id)
+    if not pid:
+        return {"ok": False, "error": "empty"}
+    ok = False
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        ok = phone_core.moment_add_like(pid, _player_name(), is_user=True)
+    except Exception:
+        logger.debug("moment_like failed", exc_info=True)
+    return {"ok": bool(ok)}
 
 
 def _resolve_bridge_state():
@@ -460,15 +534,53 @@ def _browser_history() -> list[str]:
     return [str(x) for x in raw if str(x).strip()] if isinstance(raw, list) else []
 
 
+def _browser_results() -> list[dict[str, Any]]:
+    """LLM-generated search-result sets (newest first)."""
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        return phone_core.get_browser_results()
+    except Exception:
+        return []
+
+
+def _browser_search(query: str) -> dict[str, Any]:
+    """Record the query, then ask the runtime LLM (as a search engine) for results."""
+    query = (query or "").strip()
+    if not query:
+        return {"ok": False, "error": "empty"}
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.add_browser_history(query)
+    except Exception:
+        pass
+    try:
+        import threading
+        runtime_text = (f'[浏览器] 玩家在浏览器里搜索了：“{query}”。'
+                        f'请你此刻作为这个世界的搜索引擎（不是角色本人），调用 browser_result 工具，'
+                        f'为这次搜索生成 4-6 条具体、劲爆、吸睛的搜索结果；只调用工具，不要输出对话或旁白。')
+        threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
+                         daemon=True, name="phone-browser-trigger").start()
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 def _settings() -> dict[str, Any]:
     prefs = _read_json(_base() / "phone_settings.json", {}) or {}
     sd = _richest("phone_session.json")
     sess = _read_json((sd / "phone_session.json") if sd else None, {}) or {}
+    fc = _read_json(_freq_path(), {}) or {}
+    if not fc.get("_enabled", True):
+        level = 0
+    else:
+        scale = float(fc.get("_scale", 1.0) or 1.0)
+        level = 1 if scale <= 0.6 else 3 if scale >= 1.8 else 2
     return {
         "player": str(prefs.get("player_name") or _player_name()),
         "signature": str(prefs.get("signature", "") or ""),
         "theme": str(prefs.get("theme", "#FFFAFA") or "#FFFAFA"),
         "dnd": bool(sess.get("dnd", False)),
+        "proactiveLevel": level,
         "hacked": [str(x) for x in (sess.get("hacked_characters") or [])],
     }
 
@@ -553,6 +665,31 @@ def _write_session(update: dict[str, Any]) -> None:
         logger.debug("phone session write failed", exc_info=True)
 
 
+def _freq_path() -> Path:
+    return _base() / "freq_config.json"
+
+
+def _set_freq(level: int) -> None:
+    """Persist the global proactive-contact level into freq_config.json.
+
+    level: 0=off, 1=low, 2=normal, 3=high. Stored as (_enabled, _scale) so the
+    runtime proactive monitor — which re-reads this file each tick — applies it
+    live; any per-character overrides already in the file are preserved.
+    """
+    path = _freq_path()
+    data = _read_json(path, {}) or {}
+    if not isinstance(data, dict):
+        data = {}
+    scale = {0: 0.0, 1: 0.5, 2: 1.0, 3: 2.0}.get(int(level), 1.0)
+    data["_enabled"] = int(level) != 0
+    data["_scale"] = scale
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.debug("phone freq write failed", exc_info=True)
+
+
 # ── RPC entry point ──────────────────────────────────────────────────
 
 def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -588,6 +725,12 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"contacts": _contacts()}
         if cmd == "moments":
             return {"player": _player_name(), "posts": _moments()}
+        if cmd == "post_moment":
+            return _post_moment(str(args.get("text", "")), str(args.get("imageDesc", "")))
+        if cmd == "moment_comment":
+            return _moment_comment(args.get("post_id"), str(args.get("text", "")), str(args.get("reply_to", "")))
+        if cmd == "moment_like":
+            return _moment_like(args.get("post_id"))
         if cmd == "groups":
             return {"groups": _groups()}
         if cmd == "group":
@@ -603,6 +746,21 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"calls": _call_log()}
         if cmd == "browser":
             return {"history": _browser_history()}
+        if cmd == "browser_search":
+            return _browser_search(str(args.get("query", "")))
+        if cmd == "browser_results":
+            return {"results": _browser_results()}
+        if cmd == "music_status":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"path": phone_core.get_music_path()}
+        if cmd == "music_set_path":
+            from plugins.shinsekai_chat_phone import phone_core
+            phone_core.set_music_path(str(args.get("path", "")))
+            return {"ok": True}
+        if cmd == "music_launch":
+            from plugins.shinsekai_chat_phone import phone_core
+            ok, msg = phone_core.launch_music()
+            return {"ok": bool(ok), "error": ("" if ok else msg)}
         if cmd == "settings":
             return _settings()
         if cmd == "set_profile":
@@ -613,6 +771,9 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"ok": True}
         if cmd == "set_theme":
             _write_prefs({"theme": str(args.get("theme", "") or "#FFFAFA")})
+            return {"ok": True}
+        if cmd == "set_freq":
+            _set_freq(int(args.get("level", 2)))
             return {"ok": True}
         if cmd == "send_sms":
             return _send_sms(str(args.get("name", "")), str(args.get("text", "")))

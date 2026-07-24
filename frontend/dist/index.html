@@ -247,7 +247,16 @@
   var PAGE = Q.get("pageId") || "chat_phone_app";
   var TOKEN = Q.get("shinsekai_bridge_token") || Q.get("token") || "";
   var CALL = { name: (Q.get("call_name")||"").trim(), type: (Q.get("call_type")==="video"?"video":"voice"), dir: (Q.get("call_dir")||"").trim() };
-  function closePhone(){ try { parent.postMessage({__pluginOverlay:"drag", type:"close"}, "*"); } catch(e){} }
+  // The phone iframe may be hosted by PluginPageOverlay (__pluginOverlay protocol,
+  // overlay-slot PR) OR by PhoneLauncher (__doki:"phone" protocol, desktop build).
+  // Emit BOTH so close/drag work whichever host is actually listening.
+  function postHost(ov, doki, extra){
+    try {
+      parent.postMessage(Object.assign({__pluginOverlay:"drag", type:ov}, extra||{}), "*");
+      parent.postMessage(Object.assign({__doki:"phone", type:doki}, extra||{}), "*");
+    } catch(e){}
+  }
+  function closePhone(){ postHost("close", "close"); }
 
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
@@ -1079,15 +1088,15 @@
       e.preventDefault();
       dragging=true; sx=e.screenX; sy=e.screenY; pid=e.pointerId;
       try{ document.documentElement.setPointerCapture(pid); }catch(_){}
-      parent.postMessage({__pluginOverlay:"drag", type:"start"}, "*");
+      postHost("start", "dragstart");
     });
     document.addEventListener("pointermove", function(e){
       if(!dragging) return;
-      parent.postMessage({__pluginOverlay:"drag", type:"move", dx:e.screenX-sx, dy:e.screenY-sy}, "*");
+      postHost("move", "dragmove", {dx:e.screenX-sx, dy:e.screenY-sy});
     });
     function end(){ if(!dragging) return; dragging=false;
       try{ document.documentElement.releasePointerCapture(pid); }catch(_){}
-      parent.postMessage({__pluginOverlay:"drag", type:"end"}, "*"); }
+      postHost("end", "dragend"); }
     document.addEventListener("pointerup", end);
     document.addEventListener("pointercancel", end);
   })();

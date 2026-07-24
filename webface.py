@@ -46,12 +46,20 @@ def _session_dirs() -> list[Path]:
 
 
 def _richest(name: str) -> Path | None:
-    """Prefer the active session (where the LLM writes); else richest by size."""
+    """Resolve which save dir to read ``name`` from — the ACTIVE session only.
+
+    ``session_dir()`` already picks the active save (the runtime stamps it from
+    ``--history``; the bridge reads that marker, itself falling back to the richest
+    save only when no marker exists). We return that dir unconditionally — even when
+    the file is absent — so a new save's empty 朋友圈/通讯录/短信 never borrows the
+    previous save's data through a size-based fallback (the old behaviour leaked
+    another save's moments/contacts the moment the new save hadn't written that file
+    yet). The size scan below only runs if the active session can't be resolved.
+    """
     try:
         from plugins.shinsekai_chat_phone import phone_core
         sd = phone_core.session_dir(write_marker=False)
-        fp = sd / name
-        if fp.is_file() and fp.stat().st_size > 40:
+        if sd and sd.is_dir():
             return sd
     except Exception:
         pass

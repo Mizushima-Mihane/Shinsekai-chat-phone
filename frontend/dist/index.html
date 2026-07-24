@@ -305,8 +305,9 @@
   var screen = document.getElementById("screen");
   var data = {};
   var avatarsCache = {};   // uploaded avatars (base64) — fetched once, kept out of every load()
+  var loaded = false;      // 首个 all() 回来前，列表页显示「加载中」而不是「还没有…」
   async function load(){
-    try { data = await rpc("all"); } catch(e){ data = {}; }
+    try { data = await rpc("all"); loaded = true; } catch(e){ data = {}; }
     data.avatars = avatarsCache;                      // reattach cached avatars (all() no longer ships them)
   }
   async function loadAvatars(){
@@ -407,7 +408,7 @@
         (t.unread ? '<span class="badge">'+t.unread+'</span>' : '')+'</button>';
     }).join("");
     screen.innerHTML = header("短信") + '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有短信。</div>')+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有短信。</div>' : '<div class="empty">加载中…</div>'))+'</div>';
     wireBack();
     screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
   };
@@ -529,7 +530,7 @@
       '<div class="add-bar"><input id="add-name" placeholder="输入名字添加联系人" autocomplete="off" maxlength="24">'+
       '<button class="add-go" data-add type="button">添加</button></div>'+
       '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">通讯录还是空的。<br><small>上方输入名字添加,或在剧情里交换联系方式。</small></div>')+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">通讯录还是空的。<br><small>上方输入名字添加,或在剧情里交换联系方式。</small></div>' : '<div class="empty">加载中…</div>'))+'</div>';
     wireBack();
     screen.querySelectorAll("[data-qc]").forEach(function(el){ el.onclick = function(ev){ ev.stopPropagation();
       go("inCall", {name:el.getAttribute("data-qc"), type:"voice", dir:"outgoing"}); }; });
@@ -596,7 +597,7 @@
     }).join("");
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>电话</b>'+
       '<button class="hbtn" data-dial aria-label="拨号">✆</button></div><div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有通话记录。<br><small>点右上角拨号。</small></div>')+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有通话记录。<br><small>点右上角拨号。</small></div>' : '<div class="empty">加载中…</div>'))+'</div>';
     wireBack();
     screen.querySelector("[data-dial]").onclick = go.bind(null, "dial", null);
     screen.querySelectorAll(".call-back").forEach(function(el){ el.onclick = function(ev){
@@ -685,7 +686,7 @@
       var cards = (data.moments||[]).map(cardHTML).join("");
       screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>朋友圈</b>'+
         '<button class="hbtn" data-post aria-label="发动态">＋</button></div>'+
-        '<div class="scroll">'+(cards || '<div class="empty">还没有动态。<br><small>点右上角 ＋ 发一条,或等角色更新。</small></div>')+
+        '<div class="scroll">'+(cards || (loaded ? '<div class="empty">还没有动态。<br><small>点右上角 ＋ 发一条,或等角色更新。</small></div>' : '<div class="empty">加载中…</div>'))+
         '<div style="height:16px"></div></div>';
       wireBack();
       screen.querySelector("[data-post]").onclick = guard(doPost);
@@ -791,7 +792,7 @@
     }).join("");
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>群聊</b>'+
       '<button class="hbtn" data-newgroup aria-label="建群">＋</button></div><div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">还没有群聊。<br><small>点右上角 ＋ 建群,或剧情里被拉进群。</small></div>')+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有群聊。<br><small>点右上角 ＋ 建群,或剧情里被拉进群。</small></div>' : '<div class="empty">加载中…</div>'))+'</div>';
     wireBack();
     screen.querySelector("[data-newgroup]").onclick = go.bind(null, "createGroup", null);
     screen.querySelectorAll("[data-g]").forEach(function(el){ el.onclick = go.bind(null, "group", el.getAttribute("data-g")); });

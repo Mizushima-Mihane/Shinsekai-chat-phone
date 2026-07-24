@@ -107,7 +107,7 @@ def _threads() -> list[dict[str, Any]]:
     """Conversation list: one row per character with a message thread or contact."""
     msgs: dict[str, list] = _read_json(_messages_path(), {}) or {}
     contacts = _contacts()
-    names: list[str] = list(dict.fromkeys([*msgs.keys(), *contacts]))
+    names: list[str] = [n for n in dict.fromkeys([*msgs.keys(), *contacts]) if not _is_junk_name(str(n))]
     rows: list[dict[str, Any]] = []
     for name in names:
         thread = msgs.get(name) or []
@@ -141,15 +141,28 @@ def _thread(name: str) -> list[dict[str, Any]]:
     return out
 
 
+def _is_junk_name(name: str) -> bool:
+    """Names that must never surface as a contact/thread: monitoring-intel headers and
+    markers. (A hacked/监控 mode PHONE line once leaked '【监控情报】…' in as a contact.)"""
+    n = (name or "").strip()
+    return (not n) or n.startswith("【") or "监控情报" in n or "浏览器搜索记录" in n
+
+
 def _contacts() -> list[str]:
-    """Union of contacts across the global file and every session dir."""
+    """Contacts in the ACTIVE session only.
+
+    The legacy phone bound to a single --history session. Unioning across every save
+    (an early preview shortcut) leaked other saves' contacts in as '还没有开始对话' rows
+    and dragged junk from old sessions into the current phone. Read just the active
+    session, like every other reader here.
+    """
+    d = _richest("contacts.json")
+    data = _read_json((d / "contacts.json") if d else None, {}) or {}
     names: list[str] = []
-    paths = [_base() / "contacts.json"] + [d / "contacts.json" for d in _session_dirs()]
-    for path in paths:
-        data = _read_json(path, {}) or {}
-        for name in (data.get("contacts") or {}).keys():
-            if name and name.strip() and name not in names:
-                names.append(name)
+    for name in (data.get("contacts") or {}).keys():
+        name = str(name)
+        if not _is_junk_name(name) and name not in names:
+            names.append(name)
     return names
 
 
@@ -201,15 +214,9 @@ def _resolve_bridge_state():
     return None
 
 
-def _trigger_runtime_turn(text: str) -> bool:
-    """Push a user turn to the live chat runtime so the LLM responds (route C inc.2/3).
-
-    Mirrors the main chat input's ``send-message`` command, but calls the stream
-    service directly (bypassing the snapshot patch) so the private [短信]/[群聊]
-    trigger text does NOT flash as a user bubble on the main stage. The character's
-    reply comes back through the normal loop via the send_sms / send_group_sms
-    tools. Best-effort: if no chat runtime is connected it simply no-ops.
-    """
+def _send_runtime_command(command: dict) -> bool:
+    """Send a raw command to the live chat runtime over the chat stream (best-effort).
+    Used for send-message turn injection and for skip-speech (the call-hangup interrupt)."""
     try:
         state = _resolve_bridge_state()
         if state is None:
@@ -220,14 +227,82 @@ def _trigger_runtime_turn(text: str) -> bool:
         if cs is None or not sid:
             return False
         import uuid
-        return bool(cs.send_command(sid, {
-            "type": "send-message",
-            "payload": {"text": text, "attachments": []},
-            "cmdId": uuid.uuid4().hex,
-        }))
+        command = dict(command)
+        command.setdefault("cmdId", uuid.uuid4().hex)
+        return bool(cs.send_command(sid, command))
     except Exception:
-        logger.debug("phone runtime trigger failed", exc_info=True)
+        logger.debug("phone runtime command failed", exc_info=True)
         return False
+
+
+def _trigger_runtime_turn(text: str) -> bool:
+    """Inject a user turn (send-message) to the live runtime — calls the stream service
+    directly so the private [短信]/[群聊]/[通话] trigger doesn't flash as a stage bubble."""
+    return _send_runtime_command({"type": "send-message", "payload": {"text": text, "attachments": []}})
+
+
+# ── Calls: inject the EXACT legacy turns + interrupt current speech on hangup ──
+
+def _call_answer(name: str, video: bool) -> dict[str, Any]:
+    """Player accepted an incoming (character-initiated) call → the caller opens up."""
+    name = (name or "").strip()
+    if not name:
+        return {"ok": False, "error": "empty"}
+    kind = "视频通话" if video else "通话"
+    text = (f"[{kind}] {name}主动打给玩家，玩家接听了。这通电话是{name}自己发起的——"
+            f"请{name}结合当前剧情、近况和你们之间的关系，主动开口，带着自己的目的或心情引出话题、"
+            f"推进剧情（是{name}此刻有话想对玩家说、主动联系，不是玩家找{name}、也不是玩家让他打的），"
+            f"不要反问玩家「有什么事」「找我干嘛」。请只输出{name}的对话。")
+    import threading
+    threading.Thread(target=_trigger_runtime_turn, args=(text,), daemon=True, name="phone-call-answer").start()
+    return {"ok": True}
+
+
+def _call_dial(name: str, video: bool) -> dict[str, Any]:
+    """Player dialed a contact out → the character is the answerer."""
+    name = (name or "").strip()
+    if not name:
+        return {"ok": False, "error": "empty"}
+    if video:
+        text = f"[视频通话] 玩家主动拨打了{name}的视频电话。{name}是接听方。请只输出{name}的对话。"
+    else:
+        text = f"[通话] 玩家主动拨打了{name}的电话。{name}是接听方。请只输出{name}的对话。"
+    import threading
+    threading.Thread(target=_trigger_runtime_turn, args=(text,), daemon=True, name="phone-call-dial").start()
+    return {"ok": True}
+
+
+def _call_hangup(name: str, duration: int, incoming: bool, video: bool) -> dict[str, Any]:
+    """Player hangs up: interrupt current speech (skip-speech), log, then the character reacts."""
+    name = (name or "").strip()
+
+    def _run():
+        _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
+        try:
+            from plugins.shinsekai_chat_phone import phone_core
+            ctype = ("incoming" if incoming else "outgoing") + ("_video" if video else "")
+            phone_core.log_call(name, max(int(duration or 0), 1), ctype)
+        except Exception:
+            logger.debug("call log failed", exc_info=True)
+        if name:
+            _trigger_runtime_turn(
+                f"[通话结束] 用户挂断了电话。请先以旁白身份写一句用户挂断电话的描述，再输出{name}的反应。")
+
+    import threading
+    threading.Thread(target=_run, daemon=True, name="phone-call-hangup").start()
+    return {"ok": True}
+
+
+def _call_decline(name: str, video: bool) -> dict[str, Any]:
+    """Player declined / rang out → log a missed call, no LLM turn."""
+    name = (name or "").strip()
+    if name:
+        try:
+            from plugins.shinsekai_chat_phone import phone_core
+            phone_core.log_call(name, 0, "missed_video" if video else "missed")
+        except Exception:
+            logger.debug("call decline log failed", exc_info=True)
+    return {"ok": True}
 
 
 def _send_sms(name: str, text: str) -> dict[str, Any]:
@@ -384,12 +459,32 @@ def _settings() -> dict[str, Any]:
     }
 
 
+def _unknown() -> list[str]:
+    """Active-session contacts marked known=false — shown as 未知联系人 (real name hidden)."""
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        return phone_core.unknown_names()
+    except Exception:
+        return []
+
+
+def _avatars() -> dict[str, Any]:
+    """Uploaded per-character avatars ({name: dataURI}), global across saves."""
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        return phone_core.get_web_avatars()
+    except Exception:
+        return {}
+
+
 def _all() -> dict[str, Any]:
     """Everything the phone needs in one call, so navigation is client-side."""
     md = _richest("messages.json")
     raw: dict[str, list] = _read_json((md / "messages.json") if md else None, {}) or {}
     messages: dict[str, list[dict[str, Any]]] = {}
     for name, thread in raw.items():
+        if _is_junk_name(str(name)):
+            continue
         messages[name] = [
             {"text": str(m.get("text", "")), "isUser": bool(m.get("is_user", False)), "idx": int(m.get("idx", 0))}
             for m in thread
@@ -399,6 +494,8 @@ def _all() -> dict[str, Any]:
         "threads": _threads(),
         "messages": messages,
         "contacts": _contacts(),
+        "unknown": _unknown(),
+        "avatars": _avatars(),
         "moments": _moments(),
         "groups": _groups(),
         "calls": _call_log(),
@@ -501,6 +598,20 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return _send_sms(str(args.get("name", "")), str(args.get("text", "")))
         if cmd == "send_group":
             return _send_group(str(args.get("name", "")), str(args.get("text", "")))
+        if cmd == "mark_read":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.mark_thread_read(str(args.get("name", ""))))}
+        if cmd == "set_avatar":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.set_web_avatar(str(args.get("name", "")), str(args.get("data", ""))))}
+        if cmd == "call_answer":
+            return _call_answer(str(args.get("name", "")), bool(args.get("video")))
+        if cmd == "call_dial":
+            return _call_dial(str(args.get("name", "")), bool(args.get("video")))
+        if cmd == "call_hangup":
+            return _call_hangup(str(args.get("name", "")), args.get("duration", 0), bool(args.get("incoming")), bool(args.get("video")))
+        if cmd == "call_decline":
+            return _call_decline(str(args.get("name", "")), bool(args.get("video")))
         return {"ok": False, "error": f"unknown cmd: {cmd}"}
     except Exception as exc:  # never 500 the iframe
         logger.exception("phone rpc failed: %s", cmd)

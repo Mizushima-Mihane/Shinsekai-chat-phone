@@ -73,6 +73,23 @@
 
   .av{width:40px;height:40px;flex:0 0 auto;border-radius:13px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:15px;background:linear-gradient(145deg,#c8bed2,#afa5bf)}
   .av.sm{width:34px;height:34px;border-radius:11px;font-size:13px}
+  .av.img{background-size:cover;background-position:center;background-repeat:no-repeat}
+  .av.lg{width:96px;height:96px;border-radius:30px;font-size:34px}
+  .charset{padding:24px 18px}
+  .charset-hero{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px}
+  .charset-name{font-size:17px;color:#6f637a;font-weight:700}
+  /* ── Call screen ── */
+  .callscreen{display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,#efeaf2,#e4dde8)}
+  .call-top{display:flex;flex-direction:column;align-items:center}
+  .call-av .av{width:112px;height:112px;border-radius:40px;font-size:42px}
+  .call-name{margin-top:22px;font-size:24px;color:#5c5366;font-weight:700}
+  .call-sub{margin-top:8px;color:#9b8da1;font-size:14px}
+  .call-actions{display:flex;gap:60px}
+  .call-btn{display:grid;justify-items:center;gap:9px;color:#8a7f96;font-size:12px;background:transparent}
+  .call-btn>span{display:grid;place-items:center;width:66px;height:66px;border-radius:50%;font-size:27px;color:#fff;box-shadow:2px 5px 14px rgba(0,0,0,.22);transition:transform .09s ease}
+  .call-btn.accept>span{background:linear-gradient(145deg,#6dc88b,#4aa96d)}
+  .call-btn.decline>span{background:linear-gradient(145deg,#e58080,#cc5656)}
+  .call-btn:active>span{transform:scale(.93)}
 
   /* ── Thread ── */
   .msgs{padding:16px 14px}
@@ -119,7 +136,7 @@
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
   .fld span{color:var(--soft);font-size:12px}
   .fld input{height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:13px;outline:0}
-  .primary-btn{width:100%;height:40px;border-radius:12px;background:#efdde5;color:#a7617d;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi)}
+  .primary-btn{display:grid;place-items:center;width:100%;height:40px;border-radius:12px;background:#efdde5;color:#a7617d;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi)}
   .primary-btn:active{box-shadow:inset 2px 2px 5px var(--lo),inset -2px -2px 5px var(--hi)}
   .toggle{width:46px;height:26px;border-radius:13px;background:#ded5e2;position:relative;transition:background .16s}
   .toggle.on{background:var(--accent-2)}
@@ -146,11 +163,37 @@
   var PLUGIN = Q.get("pluginId") || "com.shinsekai.chat_phone";
   var PAGE = Q.get("pageId") || "chat_phone_app";
   var TOKEN = Q.get("shinsekai_bridge_token") || Q.get("token") || "";
+  var CALL = { name: (Q.get("call_name")||"").trim(), type: (Q.get("call_type")==="video"?"video":"voice"), dir: (Q.get("call_dir")||"").trim() };
+  function closePhone(){ try { parent.postMessage({__pluginOverlay:"drag", type:"close"}, "*"); } catch(e){} }
 
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
   function initial(n){ n = String(n || "?").trim(); return n ? n.slice(0,1) : "?"; }
-  function avatar(n, sm){ return '<span class="av'+(sm?" sm":"")+'">'+esc(initial(n))+'</span>'; }
+  function isUnknown(n){ return (data.unknown||[]).indexOf(String(n)) >= 0; }
+  function disp(n){ return isUnknown(n) ? "未知联系人" : String(n==null?"":n); }
+  function avatar(n, sm){
+    var cls = "av"+(sm?" sm":"");
+    var a = isUnknown(n) ? null : (data.avatars||{})[n];   // unknown contacts stay faceless
+    if(a) return '<span class="'+cls+' img" style="background-image:url(\''+a+'\')"></span>';
+    return '<span class="'+cls+'">'+esc(initial(disp(n)))+'</span>';
+  }
+  function downscale(file, max){  // shrink an uploaded image to a small JPEG dataURI
+    return new Promise(function(resolve, reject){
+      var fr = new FileReader();
+      fr.onload = function(){
+        var img = new Image();
+        img.onload = function(){
+          var s = Math.min(max/img.width, max/img.height, 1);
+          var cw = Math.max(1, Math.round(img.width*s)), ch = Math.max(1, Math.round(img.height*s));
+          var cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
+          cv.getContext("2d").drawImage(img, 0, 0, cw, ch);
+          try { resolve(cv.toDataURL("image/jpeg", 0.85)); } catch(e){ reject(e); }
+        };
+        img.onerror = reject; img.src = fr.result;
+      };
+      fr.onerror = reject; fr.readAsDataURL(file);
+    });
+  }
 
   async function rpc(cmd, args){
     var url = "/api/plugins/" + encodeURIComponent(PLUGIN) + "/ui/" + encodeURIComponent(PAGE) + "/actions/rpc";
@@ -206,7 +249,7 @@
     var snap = data;
     var rows = (snap.threads||[]).map(function(t){
       return '<button class="row" data-name="'+esc(t.name)+'">'+avatar(t.name)+
-        '<span class="grow"><b>'+esc(t.name)+'</b><small>'+esc(t.preview||"")+'</small></span>'+
+        '<span class="grow"><b>'+esc(disp(t.name))+'</b><small>'+esc(t.preview||"")+'</small></span>'+
         (t.unread ? '<span class="badge">'+t.unread+'</span>' : '')+'</button>';
     }).join("");
     screen.innerHTML = header("短信") + '<div class="scroll">'+
@@ -217,11 +260,19 @@
 
   VIEWS.thread = async function(name){
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button>'+avatar(name,true)+
-      '<b style="margin-left:6px">'+esc(name)+'</b></div>'+
+      '<b style="margin-left:6px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(disp(name))+'</b>'+
+      '<button class="hbtn" data-call aria-label="呼叫">☎</button>'+
+      '<button class="hbtn" data-charset aria-label="角色设置">⚙</button></div>'+
       '<div class="scroll msgs" id="msgs"></div>'+
-      '<form class="composer" id="cf"><div class="field"><input id="ci" placeholder="发短信给 '+esc(name)+'" autocomplete="off"></div>'+
+      '<form class="composer" id="cf"><div class="field"><input id="ci" placeholder="发短信给 '+esc(disp(name))+'" autocomplete="off"></div>'+
       '<button class="send" type="submit">➤</button></form>';
     screen.querySelector("[data-back]").onclick = go.bind(null, "messages", null);
+    screen.querySelector("[data-charset]").onclick = go.bind(null, "charSettings", name);
+    screen.querySelector("[data-call]").onclick = function(){ go("inCall", {name:name, type:"voice", dir:"outgoing"}); };
+    (function(){  // mark read: clear the unread badge (local + persisted) on open
+      var trow = (data.threads||[]).filter(function(x){ return x.name===name; })[0];
+      if(trow && trow.unread){ trow.unread = 0; rpc("mark_read",{name:name}).catch(function(){}); }
+    })();
     var box = screen.querySelector("#msgs");
     var msgs = [];
     function draw(){
@@ -267,12 +318,44 @@
     var snap = data;
     var rows = (snap.contacts||[]).map(function(n){
       return '<button class="row" data-name="'+esc(n)+'">'+avatar(n)+
-        '<span class="grow"><b>'+esc(n)+'</b><small>发消息</small></span><span class="icon-btn">✉</span></button>';
+        '<span class="grow"><b>'+esc(disp(n))+'</b><small>发消息</small></span><span class="icon-btn">✉</span></button>';
     }).join("");
     screen.innerHTML = header("通讯录") + '<div class="scroll">'+
       (rows ? '<div class="list">'+rows+'</div>' : '<div class="empty">通讯录还是空的。</div>')+'</div>';
     wireBack();
     screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
+  };
+
+  // ── Character settings (per-contact avatar) ──
+  VIEWS.charSettings = async function(name){
+    var cur = (data.avatars||{})[name];
+    var big = cur
+      ? '<span class="av lg img" style="background-image:url(\''+cur+'\')"></span>'
+      : '<span class="av lg">'+esc(initial(disp(name)))+'</span>';
+    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button><b>角色设置</b><span class="hbtn"></span></div>'+
+      '<div class="scroll"><div class="charset">'+
+        '<div class="charset-hero">'+big+'<div class="charset-name">'+esc(disp(name))+'</div></div>'+
+        '<label class="primary-btn" style="cursor:pointer">上传头像'+
+          '<input id="av-file" type="file" accept="image/*" style="display:none"></label>'+
+        (cur ? '<button class="primary-btn" id="av-clear" style="margin-top:10px;background:#eadbe1;color:#9a6b80">移除头像</button>' : '')+
+        '<div class="set-note">头像用在短信 / 通讯录 / 群聊里,本地保存、跨存档通用。</div>'+
+      '</div></div>';
+    screen.querySelector("[data-back]").onclick = go.bind(null, "thread", name);
+    var fi = screen.querySelector("#av-file");
+    fi.onchange = async function(){
+      var f = fi.files && fi.files[0]; if(!f) return;
+      var uri; try { uri = await downscale(f, 168); } catch(e){ return; }
+      if(!data.avatars) data.avatars = {};
+      data.avatars[name] = uri;
+      try { await rpc("set_avatar", {name:name, data:uri}); } catch(e){}
+      go("charSettings", name);
+    };
+    var cl = screen.querySelector("#av-clear");
+    if(cl) cl.onclick = async function(){
+      if(data.avatars) delete data.avatars[name];
+      try { await rpc("set_avatar", {name:name, data:""}); } catch(e){}
+      go("charSettings", name);
+    };
   };
 
   // ── Calls ──
@@ -417,6 +500,47 @@
     };
   };
 
+  // ── Calls: incoming ring + in-call (host auto-pops the phone on an incoming call) ──
+  VIEWS.incomingCall = async function(info){
+    info = info || CALL;
+    screen.innerHTML = '<div class="callscreen"><div class="call-top"><div class="call-av">'+avatar(info.name)+'</div>'+
+      '<div class="call-name">'+esc(disp(info.name))+'</div>'+
+      '<div class="call-sub">'+(info.type==="video"?"视频来电":"语音来电")+'…</div></div>'+
+      '<div class="call-actions">'+
+        '<button class="call-btn decline" data-decline><span>✕</span>拒接</button>'+
+        '<button class="call-btn accept" data-accept><span>☎</span>接听</button>'+
+      '</div></div>';
+    screen.querySelector("[data-accept]").onclick = function(){
+      rpc("call_answer", {name:info.name, video:info.type==="video"}).catch(function(){});
+      go("inCall", {name:info.name, type:info.type, dir:"incoming"});
+    };
+    screen.querySelector("[data-decline]").onclick = function(){
+      rpc("call_decline", {name:info.name, video:info.type==="video"}).catch(function(){});
+      closePhone();
+    };
+  };
+
+  VIEWS.inCall = async function(info){
+    info = info || CALL;
+    if(info.dir==="outgoing"){ rpc("call_dial", {name:info.name, video:info.type==="video"}).catch(function(){}); }
+    var start = Date.now();
+    screen.innerHTML = '<div class="callscreen"><div class="call-top"><div class="call-av">'+avatar(info.name)+'</div>'+
+      '<div class="call-name">'+esc(disp(info.name))+'</div>'+
+      '<div class="call-sub" id="call-timer">通话中 00:00</div></div>'+
+      '<div class="call-actions"><button class="call-btn decline" data-hangup><span>✕</span>挂断</button></div></div>';
+    var timer = screen.querySelector("#call-timer");
+    var iv = setInterval(function(){
+      var s = Math.floor((Date.now()-start)/1000);
+      timer.textContent = "通话中 " + String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+    }, 1000);
+    screen.querySelector("[data-hangup]").onclick = function(){
+      clearInterval(iv);
+      rpc("call_hangup", {name:info.name, duration:Math.floor((Date.now()-start)/1000),
+        incoming:(info.dir==="incoming"), video:info.type==="video"}).catch(function(){});
+      closePhone();
+    };
+  };
+
   VIEWS.music = stub("音乐");
   VIEWS.voice = stub("录音");
 
@@ -468,7 +592,15 @@
     }
   }, true);
 
-  load().then(render);
+  load().then(function(){
+    if(CALL.name){ current = { view: (CALL.dir==="outgoing" ? "inCall" : "incomingCall"), arg: CALL }; }
+    render();
+  });
+  // host says the character hung up (call.ended) -> close the call screen
+  window.addEventListener("message", function(e){
+    var d = e.data;
+    if(d && d.__pluginOverlay==="callEnded" && (current.view==="inCall" || current.view==="incomingCall")){ closePhone(); }
+  });
 })();
 </script>
 </body>

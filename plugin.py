@@ -47,6 +47,29 @@ def clear_refs() -> None:
     _monitor = None
 
 
+def _emit_call_event(event: dict) -> None:
+    """Push a call.incoming / call.ended stream event to the React frontend.
+
+    The CALL marker is detected here (runtime), but the stream sink lives in main.py.
+    Reach it via a module accessor without importing (main.py runs as __main__) — the
+    runtime-side twin of the bridge's get_bridge_state. No-op if unavailable (Qt mode,
+    or host without the accessor).
+    """
+    try:
+        import sys
+        for key in ("__main__", "main"):
+            mod = sys.modules.get(key)
+            getter = getattr(mod, "get_stream_sink", None) if mod is not None else None
+            if getter is None:
+                continue
+            sink = getter()
+            if sink is not None and hasattr(sink, "emit"):
+                sink.emit(event)
+                return
+    except Exception:
+        logger.debug("call event emit failed", exc_info=True)
+
+
 # ── LLM tool: exchange contacts ───────────────────────────────────────
 
 @tool(
@@ -673,10 +696,18 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
         if name == "PHONE":
             m = re.match(r"([^：:]+)[：:]\s*(.+)", speech) or re.match(r"\[([^\]]+)\]\s*(.+)", speech)
             if m:
-                phone_items.append((m.group(1).strip(), m.group(2).strip()))
+                cn = m.group(1).strip()
+                if not (cn.startswith("【") or "监控情报" in cn):  # never deliver 监控情报 as SMS
+                    phone_items.append((cn, m.group(2).strip()))
             continue
         if name == "CALL":
-            continue  # no web call UI in React mode
+            # character-initiated call: signal the frontend to ring / pop the phone.
+            call_char = speech.split(":")[0].split("：")[0].strip()
+            call_type = "video" if ("视频" in speech or "video" in speech.lower()) else "voice"
+            if call_char and call_char in char_settings:
+                _emit_call_event({"type": "call.incoming", "name": call_char, "callType": call_type,
+                                  "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"})
+            continue
         if name in ("NARR", "CHOICE", "STAT", "bgm", "CG", "旁白"):
             if name in ("NARR", "旁白"):
                 narration_parts.append(speech)
@@ -719,6 +750,11 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
     if narration_parts:
         _recover_stranger_sms(char_settings, narration_parts, spoke_chars,
                               lambda s, m: phone_core.deliver_sms(s, m, known=False))
+        # character hung up (narrated) -> end the call in the frontend UI
+        _narr_hangup = " ".join(narration_parts)
+        if any(k in _narr_hangup for k in ("挂断了电话", "挂掉了电话", "挂断了通话", "结束了通话",
+                                           "啪地挂断", "主动挂断", "先一步挂", "生气地挂")):
+            _emit_call_event({"type": "call.ended"})
 
     # Strip COT + PHONE + CALL from the stored dialog to save tokens / keep them off stage.
     if isinstance(data, dict) and "dialog" in data:
@@ -748,7 +784,7 @@ _DROP_VERB = r"(?:删|拉黑|屏蔽|移除)"
 def _opening_char_aliases(roster: list[str]) -> dict[str, str]:
     """构造「别名 -> 角色名」映射；跨角色歧义的别名剔除，避免误配。
 
-    别名候选 = 全名 + 常见简称（四字名取前两字/后两字，如 房石阳明→房石、坂田银时→银时）。
+    别名候选 = 全名 + 常见简称（四字名取前两字/后两字，如「甲乙丙丁」→「甲乙」「丙丁」）。
     """
     counts: dict[str, list[str]] = {}
     for name in roster:
@@ -827,8 +863,8 @@ def _seed_contacts_from_opening(ctx) -> None:
         # 按「小句」判定，比逐名锚定更稳：
         # 切句时【保留顿号】，让「A、B 的联系方式」这类名字列表留在同一小句；
         # 每个提到「联系方式」的小句先判正/负极性，再把该句里出现的角色按极性归类。
-        # 例：「我有乌尔比安、银时的联系方式」→ 正（乌尔比安+银时）；
-        #     「房石的联系方式还没有」→ 负（还没→房石不建）。
+        # 例：「我有 甲、乙 的联系方式」→ 正（甲+乙）；
+        #     「丙 的联系方式还没有」→ 负（还没→丙不建）。
         _CONTACT_KWS = ("联系方式", "联络方式", "号码", "微信", "电话号")
         _NEG_MARKS = ("没", "未", "尚未", "删", "拉黑", "屏蔽", "移除", "还没", "不知道", "丢了", "找不到")
         seed_names: set[str] = set()

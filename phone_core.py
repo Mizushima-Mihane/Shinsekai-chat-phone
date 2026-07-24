@@ -28,6 +28,13 @@ _RESERVED = {"旁白", "NARR", "CALL", "COT", "CHOICE", "STAT", "PHONE", "bgm", 
 _lock = threading.Lock()
 
 
+def _is_junk_name(name: str) -> bool:
+    """Reject pseudo-speaker markers + monitoring-intel headers that must never become a
+    contact/thread (hacked/监控 mode once leaked '【监控情报】…' in as a contact)."""
+    n = (name or "").strip()
+    return (not n) or n in _RESERVED or n.startswith("【") or "监控情报" in n or "浏览器搜索记录" in n
+
+
 def _base() -> Path:
     return _BASE
 
@@ -123,7 +130,7 @@ def _next_idx(messages: dict) -> int:
 def add_contact(name: str, known: bool = True) -> bool:
     """Add/upgrade a contact in the active session's contacts.json."""
     name = (name or "").strip()
-    if not name or name in _RESERVED:
+    if _is_junk_name(name):
         return False
     with _lock:
         path = session_dir() / "contacts.json"
@@ -146,7 +153,7 @@ def deliver_sms(name: str, text: str, known: bool = True) -> bool:
     """A character sends the player an SMS (adds the contact if new)."""
     name = (name or "").strip()
     text = (text or "").strip()
-    if not name or not text or name in _RESERVED:
+    if _is_junk_name(name) or not text:
         return False
     with _lock:
         d = session_dir()
@@ -500,6 +507,89 @@ def last_message(name: str):
     """The last message dict in a thread, or None."""
     arr = messages_for(name)
     return arr[-1] if arr else None
+
+
+def log_call(name: str, duration: int, call_type: str = "outgoing") -> bool:
+    """Append a call-log entry (byte-compatible with phone_app.log_call).
+
+    call_log.json = [{name, duration, timestamp, type}], newest-first. ``type`` carries
+    the voice/video source of truth via a ``_video`` suffix (outgoing/incoming/missed
+    [+_video] / missed_dnd); webface reads voice + video from here.
+    """
+    name = (name or "").strip()
+    if not name or _is_junk_name(name):
+        return False
+    with _lock:
+        path = session_dir() / "call_log.json"
+        data = _read_json(path, [])
+        if not isinstance(data, list):
+            data = []
+        data.insert(0, {"name": name, "duration": int(duration or 0),
+                        "timestamp": time.time(), "type": call_type})
+        _write_json(path, data[:200])
+    return True
+
+
+def mark_thread_read(name: str) -> bool:
+    """Mark all incoming messages in a thread as read (clears the unread badge)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    with _lock:
+        mpath = session_dir() / "messages.json"
+        mdata = _read_json(mpath, {}) or {}
+        arr = mdata.get(name) if isinstance(mdata, dict) else None
+        if not isinstance(arr, list):
+            return False
+        changed = False
+        for m in arr:
+            if isinstance(m, dict) and not m.get("is_user") and not m.get("read"):
+                m["read"] = True
+                changed = True
+        if changed:
+            _write_json(mpath, mdata)
+    return changed
+
+
+def unknown_names() -> list:
+    """Active-session contacts explicitly marked known=false (show as 未知联系人)."""
+    data = _read_json(session_dir() / "contacts.json", {}) or {}
+    contacts = data.get("contacts") if isinstance(data, dict) else None
+    out: list = []
+    if isinstance(contacts, dict):
+        for name, info in contacts.items():
+            if isinstance(info, dict) and info.get("known", True) is False and not _is_junk_name(str(name)):
+                out.append(str(name))
+    return out
+
+
+# ── Web-phone avatars (global {name: dataURI}) ─────────────────────────
+
+def _avatars_path() -> Path:
+    return _base() / "web_avatars.json"
+
+
+def get_web_avatars() -> dict:
+    data = _read_json(_avatars_path(), {}) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def set_web_avatar(name: str, data_uri: str) -> bool:
+    """Save (or clear, if data_uri empty) a character's uploaded avatar. Global,
+    persists across saves. Rejects oversized payloads (~700 KB base64 cap)."""
+    name = (name or "").strip()
+    if not name or _is_junk_name(name):
+        return False
+    data_uri = data_uri or ""
+    if data_uri and (not data_uri.startswith("data:image/") or len(data_uri) > 700_000):
+        return False
+    with _lock:
+        avatars = get_web_avatars()
+        if data_uri:
+            avatars[name] = data_uri
+        else:
+            avatars.pop(name, None)
+        return _write_json(_avatars_path(), avatars)
 
 
 def record_pending_proactive(name: str, text: str, cap: int = 20) -> bool:

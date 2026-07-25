@@ -187,6 +187,15 @@
   .freq-opt{flex:1;height:34px;border:0;border-radius:11px;background:#efe7ec;color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s,background .15s,color .15s}
   .freq-opt:active{transform:scale(.95)}
   .freq-opt.on{background:var(--accent-2);color:#fff}
+  .freq-opt:disabled{cursor:default}
+  .freq-row.locked{opacity:.45}
+  .mode-row{display:flex;gap:6px;margin-bottom:10px}
+  .mode-opt{flex:1;height:32px;border:0;border-radius:10px;background:#efe7ec;color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
+  .mode-opt.on{background:var(--accent-2);color:#fff}
+  .aff-row{display:flex;align-items:center;gap:10px}
+  .aff-bar{flex:1;height:9px;border-radius:6px;background:#efe7ec;overflow:hidden}
+  .aff-fill{height:100%;border-radius:6px;background:var(--accent-2);transition:width .3s}
+  .aff-val{flex:0 0 auto;font-size:13px;font-weight:700;color:var(--accent-2);min-width:26px;text-align:right}
   .br-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
   .br-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
   .br-q{margin:12px 14px 4px;color:var(--soft);font-size:12px;font-weight:700}
@@ -604,7 +613,10 @@
   // ── Character settings (per-contact avatar) ──
   VIEWS.charSettings = async function(name){
     var cur = (data.avatars||{})[name];
-    var lvl = 2; try { var _cf = await rpc("char_freq",{name:name}); if(_cf && _cf.level!=null) lvl = _cf.level; } catch(e){}
+    var lvl = 2, manual = false, aff = 20;
+    try { var _cf = await rpc("char_freq",{name:name});
+      if(_cf){ if(_cf.level!=null) lvl = _cf.level; manual = !!_cf.manual; if(_cf.affinity!=null) aff = _cf.affinity; }
+    } catch(e){}
     var big = cur
       ? '<span class="av lg img" style="background-image:url(\''+cur+'\')"></span>'
       : '<span class="av lg">'+esc(initial(disp(name)))+'</span>';
@@ -616,12 +628,24 @@
         (cur ? '<button class="primary-btn" id="av-clear" style="margin-top:10px;background:#eadbe1;color:#9a6b80">移除头像</button>' : '')+
         '<div class="set-note">头像用在短信 / 通讯录 / 群聊里,本地保存、跨存档通用。</div>'+
       '</div>'+
-      '<div class="section-title" style="margin:8px 16px 6px">主动联系</div>'+
-      '<div class="set-card pad" style="margin:0 14px 16px"><div class="freq-row">'+
-        ["关闭","低频","正常","高频"].map(function(l,i){
-          return '<button class="freq-opt'+(lvl===i?" on":"")+'" data-cf="'+i+'" type="button">'+l+'</button>';
-        }).join("")+'</div>'+
-        '<div class="set-sub">'+esc(disp(name))+' 主动给你发消息 / 来电的频率（每个存档单独保存）。刚认识时会自动压低、随熟悉度慢慢升高。</div></div>'+
+      '<div class="section-title" style="margin:8px 16px 6px">好感度</div>'+
+      '<div class="set-card pad" style="margin:0 14px 12px">'+
+        '<div class="aff-row"><div class="aff-bar"><div class="aff-fill" style="width:'+aff+'%"></div></div>'+
+        '<div class="aff-val">'+aff+'</div></div>'+
+        '<div class="set-sub">好感度随剧情自然增减，也影响 '+esc(disp(name))+' 主动联系你的频率和平时的态度。</div></div>'+
+      '<div class="section-title" style="margin:8px 16px 6px">主动联系频率</div>'+
+      '<div class="set-card pad" style="margin:0 14px 16px">'+
+        '<div class="mode-row">'+
+          '<button class="mode-opt'+(manual?"":" on")+'" data-mode="auto" type="button">自主频率</button>'+
+          '<button class="mode-opt'+(manual?" on":"")+'" data-mode="manual" type="button">手动调节</button></div>'+
+        '<div class="freq-row'+(manual?"":" locked")+'">'+
+          ["关闭","低频","正常","高频"].map(function(l,i){
+            return '<button class="freq-opt'+(lvl===i?" on":"")+'" data-cf="'+i+'"'+(manual?"":" disabled")+' type="button">'+l+'</button>';
+          }).join("")+'</div>'+
+          '<div class="set-sub">'+(manual
+            ? '你正手动指定 '+esc(disp(name))+' 主动联系的频率（每个存档单独保存）。'
+            : '自主模式：频率随你俩的好感度自动调节——好感越高越主动，刚认识时会很克制。')+
+        '</div></div>'+
       '</div>';
     screen.querySelector("[data-back]").onclick = go.bind(null, "thread", name);
     var fi = screen.querySelector("#av-file");
@@ -639,7 +663,23 @@
       try { await rpc("set_avatar", {name:name, data:""}); } catch(e){}
       go("charSettings", name);
     };
+    screen.querySelectorAll("[data-mode]").forEach(function(el){ el.onclick = async function(){
+      var m = el.getAttribute("data-mode");
+      if(m === "manual"){
+        if(manual) return;
+        var yes = await askConfirm({title:"开启手动调节？",
+          text:"你与「"+disp(name)+"」还没有达到好感度要求。手动强行指定 TA 主动联系你的频率，有些角色或许会察觉——确定要开启吗？",
+          ok:"开启手动调节"});
+        if(!yes) return;
+        try { await rpc("set_char_freq",{name:name, level:lvl}); } catch(e){}
+      } else {
+        if(!manual) return;
+        try { await rpc("clear_char_freq",{name:name}); } catch(e){}
+      }
+      go("charSettings", name);
+    };});
     screen.querySelectorAll("[data-cf]").forEach(function(el){ el.onclick=function(){
+      if(!manual) return;
       screen.querySelectorAll("[data-cf]").forEach(function(x){ x.classList.remove("on"); }); el.classList.add("on");
       rpc("set_char_freq",{name:name, level:parseInt(el.getAttribute("data-cf"),10)}).catch(function(){}); }; });
   };

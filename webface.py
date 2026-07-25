@@ -1090,10 +1090,18 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"ok": True}
         if cmd == "char_freq":
             from plugins.shinsekai_chat_phone import phone_core
-            return {"level": phone_core.get_char_freq(str(args.get("name", "")))}
+            n = str(args.get("name", ""))
+            return {
+                "level": phone_core.get_char_freq(n),
+                "manual": phone_core.is_manual_freq(n),
+                "affinity": phone_core.get_affinity(n),
+            }
         if cmd == "set_char_freq":
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.set_char_freq(str(args.get("name", "")), int(args.get("level", 2) or 2)))}
+        if cmd == "clear_char_freq":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.clear_char_freq(str(args.get("name", ""))))}
         if cmd == "send_sms":
             return _send_sms(str(args.get("name", "")), str(args.get("text", "")))
         if cmd == "add_contact":

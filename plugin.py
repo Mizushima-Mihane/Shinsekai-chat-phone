@@ -1279,13 +1279,21 @@ def _on_before_chat(ctx) -> None:
         if _call_request:
             _cr_name, _cr_video = _call_request
             _cr_kind = "视频电话" if _cr_video else "电话"
+            # 玩家点名要来电是明确的元指令 —— 直接发起来电，不再赌 LLM 输出 CALL 信号。
+            # （13k-token 的大 prompt + flash 小模型经常忽略它，就成了"让他打电话却没打"。）
+            try:
+                _emit_call_event({"type": "call.incoming", "name": _cr_name,
+                                  "callType": "video" if _cr_video else "voice",
+                                  "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"})
+            except Exception:
+                logger.debug("direct player-requested call.incoming failed", exc_info=True)
             msg += (
-                f" [幕后安排来电]（这是玩家在幕后安排剧情、不是剧情内的对白）现在安排「{_cr_name}」给玩家打一通{_cr_kind}。"
-                f"请让被点名的角色立刻按 [来电] 协议来电：输出 character_name=\"CALL\", sprite=\"-1\", "
-                f"speech=\"该角色的名字{'：视频' if _cr_video else ''}\"，本轮不要再输出该角色其它台词。"
-                f"【演绎要求】务必处理成「该角色自己主动想打给玩家」——结合此刻的心情、剧情和你们的关系给一个自发的理由，"
-                f"绝不要表现出、更不要说出「是玩家要求／安排我才打的」；对玩家而言这通电话应当像是角色自发打来的。"
-                f"（若该角色此刻正与玩家当面在一起，可改为当面回应、不必真来电。「{_cr_name}」若是「你」这类称呼，指此刻正和玩家对话的角色。）")
+                f" [幕后安排来电]（玩家在幕后安排剧情、不是当面对白）系统已替「{_cr_name}」向玩家拨出一通{_cr_kind}，"
+                f"玩家手机此刻正在响铃、尚未接听。本轮你【不要】把它当成当面对话来演、【不要】替玩家接听、"
+                f"【不要】再输出通话正文或 CALL 信号（来电已由系统发起）；至多给一句「{_cr_name}」拨号时的简短心理或旁白。"
+                f"等玩家接听后，系统会用 [通话] 提示你再正式开始通话。"
+                f"【演绎要求】把这通电话处理成「{_cr_name} 自己主动想打给玩家」——结合此刻的心情、剧情和你们的关系给个自发理由，"
+                f"绝不要表现出、更不要说出「是玩家要求／安排我才打的」。")
         # ── Player's chosen name (so characters can address them naturally) ──
         try:
             from plugins.shinsekai_chat_phone.settings_app import get_player_name as _gpn, get_player_signature as _gps

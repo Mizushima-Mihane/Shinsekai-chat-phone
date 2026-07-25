@@ -367,7 +367,13 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool) -> dict[
             phone_core.log_call(name, max(int(duration or 0), 1), ctype)
         except Exception:
             logger.debug("call log failed", exc_info=True)
-        # 挂断保持静默：只打断当前语音 + 记录通话，不往主线历史写「挂断描述/角色反应」。
+        if name:
+            # 挂断反应由「真的点了挂断键」这个事件驱动（不是玩家在对话里打字"挂了"）。让角色
+            # 结合刚才通话的上下文自然反应，但不要复述"按下挂断键"这类操作旁白。
+            _trigger_runtime_turn(
+                f"[通话结束] 玩家刚挂断了和{name}的通话。请让{name}结合刚才这通电话里聊到的内容，"
+                f"自然地做出被挂断后的反应（顺着通话上下文、符合人设；病娇等强占有人设更要体现真实反应），"
+                f"直接给出{name}的台词/情绪/动作即可；不要写「按下挂断键」这类操作描述、也不要复述系统提示。")
 
     import threading
     threading.Thread(target=_run, daemon=True, name="phone-call-hangup").start()

@@ -209,11 +209,36 @@ _sms_pace_lock = threading.Lock()
 _sms_pace_next: dict[str, float] = {}
 
 
+def _typing_path() -> Path:
+    return session_dir() / "sms_typing.json"
+
+
+def _set_typing(name: str, until_ts: float) -> None:
+    """Mark a character as 「正在输入」until its queued SMS lands, so the web phone can show a
+    typing indicator across the runtime→bridge process boundary (via a tiny JSON file)."""
+    with _lock:
+        p = _typing_path()
+        data = _read_json(p, {}) or {}
+        if not isinstance(data, dict):
+            data = {}
+        data[name] = float(until_ts)
+        _write_json(p, data)
+
+
+def get_typing() -> dict:
+    """Names whose paced SMS hasn't landed yet → {name: True}; entries self-expire by time."""
+    now = time.time()
+    data = _read_json(_typing_path(), {}) or {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(n): True for n, ts in data.items() if isinstance(ts, (int, float)) and ts > now}
+
+
 def deliver_sms_paced(name: str, text: str, known: bool = True) -> bool:
-    """Deliver a character SMS with human-like pacing: the first line lands right away, each
-    subsequent line to the SAME character is spaced 10-30s out (a background timer writes it
-    later). Lets a character fire off several texts in one LLM turn without them all popping
-    onto the player's screen at once. Falls back to an immediate write on any error."""
+    """Deliver a character SMS with human-like typing pacing (mirrors the legacy phone): the
+    first line waits 1-3s (character reads → types), each subsequent line to the SAME character
+    is +2-4s after the previous one. A 「正在输入」flag is written so the phone can show a typing
+    indicator until the line lands. Immediate write on any error."""
     name = (name or "").strip()
     text = (text or "").strip()
     if _is_junk_name(name) or not text:
@@ -221,8 +246,13 @@ def deliver_sms_paced(name: str, text: str, known: bool = True) -> bool:
     import random
     now = time.time()
     with _sms_pace_lock:
-        base = max(now, _sms_pace_next.get(name, 0.0))
-        _sms_pace_next[name] = base + random.uniform(10.0, 30.0)
+        prev = _sms_pace_next.get(name, 0.0)
+        if prev <= now:
+            base = now + random.uniform(1.0, 3.0)   # first line: read → type
+        else:
+            base = prev + random.uniform(2.0, 4.0)  # queue after the previous line
+        _sms_pace_next[name] = base
+    _set_typing(name, base)
     delay = base - now
     if delay <= 0.05:
         return deliver_sms(name, text, known)

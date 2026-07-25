@@ -1070,6 +1070,9 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "thread":
             _tn = str(args.get("name", ""))
             return {"name": args.get("name", ""), "messages": _thread(_tn), "unknown": (_tn in _unknown())}
+        if cmd == "typing":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"typing": phone_core.get_typing()}
         if cmd == "contacts":
             return {"contacts": _contacts()}
         if cmd == "moments":

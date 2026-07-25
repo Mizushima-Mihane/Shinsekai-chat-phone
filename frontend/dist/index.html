@@ -112,6 +112,8 @@
   .ask-b:active{transform:scale(.96)}
   .ask-b.cancel{background:#e7e0ea;color:#8a7d92}
   .ask-b.ok{background:var(--accent-2);color:#fff}
+  .pm-img{width:100%;margin:8px 0 2px;height:38px;border:1px dashed rgba(150,110,130,.5);border-radius:12px;background:transparent;color:var(--accent-2);font-size:13px;font-weight:600;cursor:pointer}
+  .pm-img:active{background:#f0e7ec}
   .ask-text{font-size:12.5px;color:#7c7086;line-height:1.55;margin-bottom:2px}
   .add-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
   .add-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
@@ -361,6 +363,47 @@
       ov.querySelector(".cancel").onclick = function(){ close(false); };
       ov.querySelector(".ok").onclick = function(){ close(true); };
       ov.onclick = function(e){ if(e.target===ov) close(false); };
+    });
+  }
+
+  // 朋友圈正文里的配图标记 [图片N：描述] / [图:描述] → 渲染成配图占位（角色与玩家通用）
+  function momentText(t){
+    t = String(t == null ? "" : t);
+    var imgs = [];
+    var body = t.replace(/\[图片?\s*\d*\s*[：:]\s*([^\]]*)\]/g, function(_m, d){ imgs.push(String(d).trim()); return ""; }).trim();
+    var html = body ? '<p>'+esc(body)+'</p>' : '';
+    imgs.forEach(function(d){ html += '<div class="imgdesc">🖼 '+(d?esc(d):"图片")+'</div>'; });
+    return html;
+  }
+
+  // 发朋友圈对话框：正文 + 「＋插入图片」按钮（往正文插入 [图片N：描述] 标记，可多张）
+  function postMomentDialog(){
+    return new Promise(function(resolve){
+      var ov = document.createElement("div"); ov.className = "ask-ov";
+      ov.innerHTML = '<div class="ask-box"><div class="ask-title">发朋友圈</div>'+
+        '<textarea class="ask-in" id="pm-text" rows="3" placeholder="分享点什么…" maxlength="400"></textarea>'+
+        '<button class="pm-img" type="button" id="pm-img">＋ 插入图片</button>'+
+        '<div class="ask-btns"><button class="ask-b cancel">取消</button><button class="ask-b ok">发布</button></div></div>';
+      screen.appendChild(ov);
+      requestAnimationFrame(function(){ ov.classList.add("on"); });
+      var ta = ov.querySelector("#pm-text");
+      setTimeout(function(){ try{ ta.focus(); }catch(e){} }, 60);
+      var imgN = 0;
+      function close(v){ ov.classList.remove("on"); setTimeout(function(){ ov.remove(); }, 180); resolve(v); }
+      ov.querySelector("#pm-img").onclick = async function(){
+        var d = await askText({title:"图片描述", placeholder:"描述这张图片（如：海边的晚霞）", max:60});
+        if(!d) return;
+        imgN++;
+        var tag = "[图片"+imgN+"："+d+"]";
+        var pos = (ta.selectionStart != null) ? ta.selectionStart : ta.value.length;
+        var pre = ta.value.slice(0,pos), post = ta.value.slice(pos);
+        if(pre && pre[pre.length-1] !== "\n") pre += "\n";
+        ta.value = pre + tag + post;
+        try{ ta.focus(); ta.selectionStart = ta.selectionEnd = (pre+tag).length; }catch(e){}
+      };
+      ov.querySelector(".cancel").onclick = function(){ close(null); };
+      ov.querySelector(".ok").onclick = function(){ close((ta.value||"").trim() || null); };
+      ov.onclick = function(e){ if(e.target===ov) close(null); };
     });
   }
 
@@ -685,7 +728,7 @@
           ' <button class="cmt-reply" data-rc="'+esc(String(p.id))+'" data-rt="'+esc(c.author)+'">回复</button></div>'; }).join("")+'</div>' : '';
       var img = p.imageDesc ? '<div class="imgdesc">🖼 '+esc(p.imageDesc)+'</div>' : '';
       return '<article class="moment"><div class="who">'+avatar(p.author)+'<div><b>'+esc(p.author)+
-        '</b><small>动态</small></div></div>'+(p.text?'<p>'+esc(p.text)+'</p>':'')+img+
+        '</b><small>动态</small></div></div>'+momentText(p.text)+img+
         ((likes||cmts)?'<hr>':'')+likes+cmts+
         '<div class="moment-acts"><button class="mact" data-like="'+esc(String(p.id))+'">♡ 赞</button>'+
         '<button class="mact" data-cmt="'+esc(String(p.id))+'">💬 评论</button></div></article>';
@@ -704,11 +747,10 @@
     }
     function me(){ return data.player || "我"; }
     async function doPost(){
-      var t = await askText({title:"发朋友圈", placeholder:"分享点什么…", multi:true, max:280});
+      var t = await postMomentDialog();
       if(!t) return;
-      var img = await askText({title:"配图描述（可选）", placeholder:"如：海边的晚霞；留空则不配图", max:60});
-      try { await rpc("post_moment",{text:t, imageDesc:(img||"")}); } catch(e){}
-      try { var g = await rpc("moments"); if(g&&g.posts) data.moments = g.posts; } catch(e){}   // refetch moments only (not everything)
+      try { await rpc("post_moment",{text:t}); } catch(e){}   // 图片以 [图片N：描述] 嵌在正文
+      try { var g = await rpc("moments"); if(g&&g.posts) data.moments = g.posts; } catch(e){}
       render();
     }
     function doLike(id){   // optimistic toggle: 点赞/取消赞（server 幂等，poll 校正）

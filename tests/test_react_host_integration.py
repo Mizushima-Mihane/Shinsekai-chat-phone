@@ -5,7 +5,6 @@ import logging
 import sys
 import types
 from pathlib import Path
-from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,35 +139,13 @@ def test_author_page_handles_generic_payload_and_gentle_vibration() -> None:
     assert "@media (prefers-reduced-motion:reduce)" in page
 
 
-def test_runtime_turn_is_sent_to_the_active_chat_stream(monkeypatch) -> None:
+def test_runtime_turn_uses_the_host_user_input_trigger() -> None:
     webface = _load_phone_module("webface")
-
-    class ChatStream:
-        def __init__(self) -> None:
-            self.sent: list[tuple[str, dict[str, object]]] = []
-
-        def send_command(self, session_id: str, command: dict[str, object]) -> bool:
-            self.sent.append((session_id, command))
-            return True
-
-    stream = ChatStream()
-    bridge = types.ModuleType("frontend_bridge")
-    bridge.get_bridge_state = lambda: SimpleNamespace(
-        chat_session={"sessionId": "active-session"},
-        chat_stream=stream,
-    )
-    monkeypatch.setitem(sys.modules, "frontend_bridge", bridge)
+    sent: list[str] = []
+    webface.bind_user_input_trigger(sent.append)
 
     assert webface._trigger_runtime_turn("[短信] 请角色回复") is True
-    assert len(stream.sent) == 1
-    session_id, command = stream.sent[0]
-    assert session_id == "active-session"
-    assert command["type"] == "send-message"
-    assert command["payload"] == {
-        "text": "[短信] 请角色回复",
-        "attachments": [],
-    }
-    assert isinstance(command["cmdId"], str) and command["cmdId"]
+    assert sent == ["[短信] 请角色回复"]
 
 
 def test_profile_rpc_writes_the_signature_key_used_by_python(monkeypatch) -> None:

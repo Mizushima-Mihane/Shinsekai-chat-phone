@@ -1899,6 +1899,7 @@ class ChatPhonePlugin(PluginBase):
                 actions=[FrontendConfigAction(id="rpc", label="rpc", run=webface.rpc)],
                 order=40.0,
             ))
+            register.register_user_input_trigger(webface.bind_user_input_trigger)
             try:
                 set_frontend_ui(register.frontend_ui())
             except AttributeError:
@@ -1930,4 +1931,10 @@ class ChatPhonePlugin(PluginBase):
         m = get_monitor()
         if m is not None:
             m.stop()
+        try:
+            from plugins.shinsekai_chat_phone import webface
+
+            webface.bind_user_input_trigger(None)
+        except Exception:
+            pass
         clear_refs()

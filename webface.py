@@ -32,6 +32,15 @@ logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
 PLAYER = "__player__"
 _BASE = Path("data/plugins/com.shinsekai.chat_phone")
+_USER_INPUT_TRIGGER = None
+_USER_INPUT_TRIGGER_LOCK = threading.RLock()
+
+
+def bind_user_input_trigger(emit) -> None:
+    """Bind the host-provided user-input emitter for this plugin process."""
+    global _USER_INPUT_TRIGGER
+    with _USER_INPUT_TRIGGER_LOCK:
+        _USER_INPUT_TRIGGER = emit
 
 
 # ── paths ────────────────────────────────────────────────────────────
@@ -274,57 +283,19 @@ def _moment_like(post_id: Any) -> dict[str, Any]:
     return {"ok": bool(ok)}
 
 
-def _resolve_bridge_state():
-    """Reach the live BridgeState without re-importing the bridge module.
-
-    The bridge runs either as ``__main__`` (python frontend_bridge.py) or as an
-    imported module (webui_react.py). ``import frontend_bridge`` would create a
-    second module instance with a fresh (None) state, so instead we look it up in
-    ``sys.modules`` and take the first that actually holds a state.
-    """
-    import sys
-    for key in ("frontend_bridge", "__main__"):
-        mod = sys.modules.get(key)
-        getter = getattr(mod, "get_bridge_state", None) if mod is not None else None
-        if getter is None:
-            continue
-        try:
-            st = getter()
-        except Exception:
-            st = None
-        if st is not None:
-            return st
-    return None
-
-
-def _send_runtime_command(command: dict) -> bool:
-    """Send a raw command to the live chat runtime over the chat stream (best-effort).
-    Used for send-message turn injection and for skip-speech (the call-hangup interrupt)."""
-    try:
-        state = _resolve_bridge_state()
-        if state is None:
-            return False
-        cs = getattr(state, "chat_stream", None)
-        sess = getattr(state, "chat_session", None) or {}
-        sid = str((sess.get("sessionId") if isinstance(sess, dict) else "") or "").strip()
-        if cs is None or not sid:
-            return False
-        import uuid
-        command = dict(command)
-        command.setdefault("cmdId", uuid.uuid4().hex)
-        return bool(cs.send_command(sid, command))
-    except Exception:
-        logger.debug("phone runtime command failed", exc_info=True)
-        return False
-
-
 def _trigger_runtime_turn(text: str) -> bool:
-    """Inject a user turn (send-message) to the live runtime — calls the stream service
-    directly so the private [短信]/[群聊]/[通话] trigger doesn't flash as a stage bubble."""
-    return _send_runtime_command({"type": "send-message", "payload": {"text": text, "attachments": []}})
+    """Inject a private phone turn through the host's user-input trigger API."""
+    with _USER_INPUT_TRIGGER_LOCK:
+        trigger = _USER_INPUT_TRIGGER
+    if trigger is not None:
+        try:
+            return trigger(text) is not False
+        except Exception:
+            logger.debug("phone user-input trigger failed", exc_info=True)
+    return False
 
 
-# ── Calls: inject the EXACT legacy turns + interrupt current speech on hangup ──
+# ── Calls: inject the exact legacy turns through the host input pipeline ──
 
 def _call_answer(name: str, video: bool) -> dict[str, Any]:
     """Player accepted an incoming (character-initiated) call → the caller opens up."""
@@ -356,7 +327,7 @@ def _call_dial(name: str, video: bool) -> dict[str, Any]:
 
 
 def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt: int = 0) -> dict[str, Any]:
-    """Player hangs up: interrupt current speech, log, then the character reacts.
+    """Player hangs up: log the call, then let the character react.
 
     Yandere 挂不断: if the character is a yandere who has tampered with the phone, the
     first few hang-up presses are blocked — it resists (a breakdown turn is injected and
@@ -380,7 +351,6 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt:
         return {"ok": False, "blocked": True, "attempt": int(attempt or 0)}
 
     def _run():
-        _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
         try:
             from plugins.shinsekai_chat_phone import phone_core
             ctype = ("incoming" if incoming else "outgoing") + ("_video" if video else "")

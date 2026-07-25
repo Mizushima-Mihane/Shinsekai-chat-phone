@@ -1,5 +1,6 @@
 (() => {
   const views = Array.from(document.querySelectorAll("[data-view]"));
+  const phoneShell = document.querySelector(".phone-shell");
   const clock = document.querySelector("#clock");
   const callerName = document.querySelector("#caller-name");
   const callerAvatar = document.querySelector("#caller-avatar");
@@ -9,6 +10,7 @@
     for (const view of views) {
       view.hidden = view.dataset.view !== name;
     }
+    phoneShell.classList.toggle("phone-shell--ringing", name === "incoming-call");
   }
 
   function closeOverlay() {

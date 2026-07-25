@@ -47,6 +47,12 @@ button {
   mask-image: linear-gradient(to bottom, #000, transparent 72%);
 }
 
+.phone-shell--ringing {
+  transform-origin: center;
+  animation: gentle-ring 1.8s ease-in-out infinite;
+  will-change: transform;
+}
+
 .status-bar {
   position: relative;
   z-index: 4;
@@ -332,7 +338,31 @@ button {
   }
 }
 
+@keyframes gentle-ring {
+  0%,
+  18%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0);
+  }
+  3% {
+    transform: translate3d(-1px, 0, 0) rotate(-0.12deg);
+  }
+  6% {
+    transform: translate3d(1px, 0, 0) rotate(0.12deg);
+  }
+  9% {
+    transform: translate3d(-0.75px, 0, 0) rotate(-0.08deg);
+  }
+  12% {
+    transform: translate3d(0.75px, 0, 0) rotate(0.08deg);
+  }
+  15% {
+    transform: translate3d(0, 0, 0) rotate(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .phone-shell--ringing,
   .call-glow {
     animation: none;
   }

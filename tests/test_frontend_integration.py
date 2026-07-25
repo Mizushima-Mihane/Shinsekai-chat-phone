@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import frontend_integration as integration
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeController:
@@ -79,3 +82,16 @@ def test_strips_call_marker_but_keeps_other_dialog() -> None:
     assert payload["dialog"] == [
         {"character_name": "NARR", "speech": "The phone rings."}
     ]
+
+
+def test_incoming_call_view_enables_gentle_reduced_motion_safe_shake() -> None:
+    script = (ROOT / "frontend" / "dist" / "app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "frontend" / "dist" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'name === "incoming-call"' in script
+    assert 'classList.toggle("phone-shell--ringing"' in script
+    assert ".phone-shell--ringing" in styles
+    assert "animation: gentle-ring 1.8s ease-in-out infinite" in styles
+    reduced_motion = styles.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    assert ".phone-shell--ringing" in reduced_motion
+    assert "animation: none" in reduced_motion

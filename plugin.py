@@ -1196,7 +1196,7 @@ class ChatPhonePlugin(PluginBase):
     @property
     def plugin_id(self) -> str: return "com.shinsekai.chat_phone"
     @property
-    def plugin_version(self) -> str: return "1.1.0"
+    def plugin_version(self) -> str: return "1.1.1"
     @property
     def plugin_name(self) -> str: return "Chat Phone"
     @property

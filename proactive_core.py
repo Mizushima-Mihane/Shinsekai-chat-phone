@@ -195,6 +195,32 @@ class ProactiveCore:
             pass
         return enabled, scale, dnd
 
+    def _emit_call(self, name: str, video: bool) -> bool:
+        """Emit a call.incoming stream event so the phone rings (like a story CALL marker)."""
+        try:
+            import sys
+            event = {"type": "call.incoming", "name": name,
+                     "callType": ("video" if video else "voice"),
+                     "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"}
+            for key in ("__main__", "main"):
+                mod = sys.modules.get(key)
+                getter = getattr(mod, "get_stream_sink", None) if mod is not None else None
+                if getter is None:
+                    continue
+                sink = getter()
+                if sink is not None and hasattr(sink, "emit"):
+                    sink.emit(event)
+                    return True
+        except Exception:
+            logger.debug("proactive call emit failed", exc_info=True)
+        return False
+
+    def _maybe_call(self, name: str, scale: float) -> bool:
+        """Rare random incoming call from a contact (much rarer than a proactive SMS)."""
+        if random.random() >= 0.01 * float(scale or 1.0):
+            return False
+        return self._emit_call(name, random.random() < 0.3)
+
     # ── the decision tick ─────────────────────────────────────────────
     def _tick(self) -> None:
         from plugins.shinsekai_chat_phone import phone_core
@@ -221,9 +247,12 @@ class ProactiveCore:
             if self._maybe_post_moment(name):
                 continue
             if dnd:
-                continue  # 勿扰: suppress proactive SMS (ambient moments still allowed)
+                continue  # 勿扰: suppress proactive SMS + calls (ambient moments still allowed)
             if name in scene:
-                continue  # face-to-face — say it in person, don't text
+                continue  # face-to-face — say it in person, don't text / call
+            # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
+            if self._maybe_call(name, scale):
+                continue  # rang the player — don't also text this tick
             try:
                 from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
                 yandere = is_character_yandere(name)

@@ -743,8 +743,20 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
             call_char = speech.split(":")[0].split("：")[0].strip()
             call_type = "video" if ("视频" in speech or "video" in speech.lower()) else "voice"
             if call_char and call_char in char_settings:
-                _emit_call_event({"type": "call.incoming", "name": call_char, "callType": call_type,
-                                  "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"})
+                _dnd = False
+                try:
+                    from plugins.shinsekai_chat_phone.settings_app import is_dnd as _is_dnd
+                    _dnd = _is_dnd()
+                except Exception:
+                    _dnd = False
+                if _dnd:  # 勿扰：不弹来电，只记一条未接
+                    try:
+                        phone_core.log_call(call_char, 0, "missed_video" if call_type == "video" else "missed_dnd")
+                    except Exception:
+                        pass
+                else:
+                    _emit_call_event({"type": "call.incoming", "name": call_char, "callType": call_type,
+                                      "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"})
             continue
         if name in ("NARR", "CHOICE", "STAT", "bgm", "CG", "旁白"):
             if name in ("NARR", "旁白"):

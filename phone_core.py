@@ -574,19 +574,52 @@ def moment_get_posts() -> list:
 
 # ── Browser (浏览器) — player searches + LLM-generated result pages ─────
 
+def _load_browser_history() -> list[dict]:
+    """Browser history as {q, del} dicts. Back-compat: old entries are bare strings."""
+    raw = _read_json(session_dir() / "browser_history.json", [])
+    out: list[dict] = []
+    if isinstance(raw, list):
+        for x in raw:
+            if isinstance(x, str) and x.strip():
+                out.append({"q": x.strip(), "del": False})
+            elif isinstance(x, dict) and str(x.get("q", "")).strip():
+                out.append({"q": str(x["q"]).strip(), "del": bool(x.get("del"))})
+    return out
+
+
 def add_browser_history(query: str) -> bool:
     """Record a player search query (newest-first, capped). Feeds monitoring intel."""
     query = (query or "").strip()
     if not query:
         return False
     with _lock:
-        path = session_dir() / "browser_history.json"
-        data = _read_json(path, [])
-        if not isinstance(data, list):
-            data = []
-        data.insert(0, query)
-        _write_json(path, data[:100])
+        data = _load_browser_history()
+        # de-dup a still-visible identical query so it just floats back to the top
+        data = [d for d in data if not (d["q"] == query and not d["del"])]
+        data.insert(0, {"q": query, "del": False})
+        _write_json(session_dir() / "browser_history.json", data[:100])
     return True
+
+
+def get_browser_history() -> list[str]:
+    """Visible (not player-deleted) search queries, newest first."""
+    return [d["q"] for d in _load_browser_history() if not d["del"]]
+
+
+def remove_browser_history(query: str) -> bool:
+    """Player deletes a search from their own view — but it's only hidden (del=True);
+    monitoring (yandere) characters can still dig it up. Never truly erased here."""
+    query = (query or "").strip()
+    if not query:
+        return False
+    with _lock:
+        data = _load_browser_history()
+        for d in data:
+            if d["q"] == query and not d["del"]:
+                d["del"] = True
+                _write_json(session_dir() / "browser_history.json", data)
+                return True
+    return False
 
 
 def save_browser_results(query: str, results) -> bool:

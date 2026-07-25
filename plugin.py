@@ -1482,13 +1482,26 @@ def _on_before_chat(ctx) -> None:
             except Exception:
                 pass
 
-            # Browser history (session-scoped)
+            # Browser history (session-scoped) — incl. searches the player tried to delete
             try:
                 hp2 = _sms_dir / "browser_history.json"
                 if hp2.is_file():
                     hist = _j3.loads(hp2.read_text(encoding="utf-8"))
                     if hist:
-                        intel_parts.append(f"浏览器搜索记录：{_j3.dumps(hist, ensure_ascii=False)}")
+                        vis, deleted = [], []
+                        for _x in hist:
+                            if isinstance(_x, str):
+                                vis.append(_x)
+                            elif isinstance(_x, dict) and str(_x.get("q", "")).strip():
+                                (deleted if _x.get("del") else vis).append(str(_x["q"]))
+                        _bparts = []
+                        if vis:
+                            _bparts.append("浏览器搜索记录：" + _j3.dumps(vis, ensure_ascii=False))
+                        if deleted:
+                            _bparts.append(
+                                "玩家偷偷删掉、以为无人知晓的搜索：" + _j3.dumps(deleted, ensure_ascii=False))
+                        if _bparts:
+                            intel_parts.append("\n".join(_bparts))
             except Exception:
                 pass
 

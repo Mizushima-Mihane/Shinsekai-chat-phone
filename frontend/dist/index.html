@@ -220,6 +220,11 @@
   .prof-av-btn{padding:8px 14px;border-radius:11px;background:var(--accent-2);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
   .prof-av-clear{padding:8px 12px;border-radius:11px;border:0;background:var(--bubble-out);color:#9a6b80;font-size:12.5px;font-weight:600;cursor:pointer}
   .br-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
+  .br-hist-h{padding:12px 18px 4px;color:var(--muted);font-size:12px}
+  .br-hist{display:flex;align-items:center;gap:6px;padding:0 10px 0 18px}
+  .br-hist-q{flex:1;min-width:0;text-align:left;padding:9px 0;color:var(--ink);font-size:13.5px;background:none;border:0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .br-hist-x{flex:0 0 auto;width:26px;height:26px;border:0;border-radius:8px;background:none;color:var(--muted);font-size:12px;cursor:pointer}
+  .br-hist-x:active{background:var(--bubble-out)}
   .br-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
   .br-q{margin:12px 14px 4px;color:var(--soft);font-size:12px;font-weight:700}
   .br-item{margin:8px 14px;padding:14px;border-radius:14px;background:var(--card);box-shadow:2px 3px 9px rgba(105,77,98,.08),-2px -2px 7px rgba(255,255,255,.6)}
@@ -767,19 +772,39 @@
       }).join("");
       return '<div class="br-q">🔍 '+esc(latest.query||"")+'</div>'+(items || '<div class="empty">没有结果。</div>');
     }
+    function historyHTML(){
+      var h = data.browser || [];
+      if(!h.length) return '';
+      return '<div class="br-hist-h">最近搜索</div>' + h.slice(0,12).map(function(q){
+        return '<div class="br-hist"><button class="br-hist-q" data-hq="'+esc(q)+'" type="button">🕘 '+esc(q)+'</button>'+
+          '<button class="br-hist-x" data-hx="'+esc(q)+'" type="button" aria-label="删除">✕</button></div>';
+      }).join("");
+    }
     function render(searching){
       screen.innerHTML = header("浏览器") +
         '<div class="br-bar"><input id="br-in" placeholder="搜索点什么…" autocomplete="off" maxlength="60">'+
         '<button class="add-go" data-go type="button">搜索</button></div>'+
         '<div class="scroll">'+(searching?'<div class="br-loading">正在搜索…</div>':'')+
+        historyHTML()+
         resultsHTML(data.browserResults)+'<div style="height:12px"></div></div>';
       wireBack();
       var inp = screen.querySelector("#br-in");
       function run(){ var q=(inp.value||"").trim(); if(!q){ inp.focus(); return; } doSearch(q); }
       screen.querySelector("[data-go]").onclick = run;
       inp.onkeydown = function(e){ if(e.key==="Enter"){ e.preventDefault(); run(); } };
+      screen.querySelectorAll("[data-hq]").forEach(function(el){ el.onclick=function(){
+        var q = el.getAttribute("data-hq"); inp.value = q; doSearch(q);
+      }; });
+      screen.querySelectorAll("[data-hx]").forEach(function(el){ el.onclick=async function(ev){
+        ev.stopPropagation();
+        var q = el.getAttribute("data-hx");
+        data.browser = (data.browser||[]).filter(function(x){ return x!==q; });
+        try { await rpc("browser_remove",{query:q}); } catch(e){}
+        render(searching);
+      }; });
     }
     async function doSearch(q){
+      data.browser = [q].concat((data.browser||[]).filter(function(x){ return x!==q; })).slice(0,100);
       render(true);
       var before = JSON.stringify(data.browserResults||[]);
       var myGen = navGen;

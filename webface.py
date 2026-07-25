@@ -587,9 +587,18 @@ def _groups() -> list[dict[str, Any]]:
 
 
 def _browser_history() -> list[str]:
+    """Visible search history — player-deleted entries are hidden here (the runtime's
+    monitoring intel still sees them for yandere characters)."""
     d = _richest("browser_history.json")
     raw = _read_json((d / "browser_history.json") if d else None, [])
-    return [str(x) for x in raw if str(x).strip()] if isinstance(raw, list) else []
+    out: list[str] = []
+    if isinstance(raw, list):
+        for x in raw:
+            if isinstance(x, str) and x.strip():
+                out.append(x.strip())
+            elif isinstance(x, dict) and str(x.get("q", "")).strip() and not x.get("del"):
+                out.append(str(x["q"]).strip())
+    return out
 
 
 def _browser_results() -> list[dict[str, Any]]:
@@ -1044,6 +1053,9 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"calls": _call_log()}
         if cmd == "browser":
             return {"history": _browser_history()}
+        if cmd == "browser_remove":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.remove_browser_history(str(args.get("query", ""))))}
         if cmd == "browser_search":
             return _browser_search(str(args.get("query", "")))
         if cmd == "browser_results":

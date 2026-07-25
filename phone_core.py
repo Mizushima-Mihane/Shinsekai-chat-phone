@@ -554,6 +554,19 @@ def moment_add_like(post_id: int, liker: str, is_user: bool = False) -> bool:
         return True
 
 
+def moment_remove_like(post_id, liker: str) -> bool:
+    """Remove a like (取消赞). Returns False if not currently liked / no such post."""
+    liker = (liker or "").strip()
+    with _lock:
+        data = _load_moments()
+        p = _moment_find(data["posts"], post_id)
+        if not p or liker not in (p.get("likes") or []):
+            return False
+        p["likes"].remove(liker)
+        _write_json(_moments_path(), data)
+        return True
+
+
 def moment_get_posts() -> list:
     """All posts, oldest-first (for prompt injection)."""
     return list(_load_moments()["posts"])

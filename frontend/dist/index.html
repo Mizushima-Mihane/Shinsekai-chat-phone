@@ -166,6 +166,7 @@
   .moment .cmts div{padding:6px 0;font-size:12.5px;line-height:1.5;border-bottom:1px solid rgba(203,196,212,.35)}
   .moment .cmts div:last-child{border-bottom:0}
   .moment .cmts b{color:var(--accent-ink)}
+  .cmt-reply{border:0;background:transparent;color:var(--accent-2);font-size:11px;cursor:pointer;padding:0 2px;font-weight:600}
   .moment-acts{display:flex;gap:8px;margin-top:12px}
   .mact{flex:1;height:32px;border:0;border-radius:10px;background:#efe7ec;color:var(--accent-2);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s}
   .mact:active{transform:scale(.96);background:#eadbe1}
@@ -680,7 +681,8 @@
       var likes = (p.likes&&p.likes.length) ? '<div class="likes">♡ '+p.likes.map(esc).join("，")+'</div>' : '';
       var cmts = (p.comments&&p.comments.length) ? '<div class="cmts">'+p.comments.map(function(c){
         var head = c.replyTo ? esc(c.author)+' 回复 '+esc(c.replyTo) : esc(c.author);
-        return '<div class="cmt"><b>'+head+'</b>：'+esc(c.text)+'</div>'; }).join("")+'</div>' : '';
+        return '<div class="cmt"><b>'+head+'</b>：'+esc(c.text)+
+          ' <button class="cmt-reply" data-rc="'+esc(String(p.id))+'" data-rt="'+esc(c.author)+'">回复</button></div>'; }).join("")+'</div>' : '';
       var img = p.imageDesc ? '<div class="imgdesc">🖼 '+esc(p.imageDesc)+'</div>' : '';
       return '<article class="moment"><div class="who">'+avatar(p.author)+'<div><b>'+esc(p.author)+
         '</b><small>动态</small></div></div>'+(p.text?'<p>'+esc(p.text)+'</p>':'')+img+
@@ -697,31 +699,35 @@
       wireBack();
       screen.querySelector("[data-post]").onclick = guard(doPost);
       screen.querySelectorAll("[data-like]").forEach(function(el){ el.onclick = guard(function(){ return doLike(el.getAttribute("data-like")); }); });
-      screen.querySelectorAll("[data-cmt]").forEach(function(el){ el.onclick = guard(function(){ return doComment(el.getAttribute("data-cmt")); }); });
+      screen.querySelectorAll("[data-cmt]").forEach(function(el){ el.onclick = guard(function(){ return doComment(el.getAttribute("data-cmt"), ""); }); });
+      screen.querySelectorAll("[data-rc]").forEach(function(el){ el.onclick = guard(function(){ return doComment(el.getAttribute("data-rc"), el.getAttribute("data-rt")); }); });
     }
     function me(){ return data.player || "我"; }
     async function doPost(){
       var t = await askText({title:"发朋友圈", placeholder:"分享点什么…", multi:true, max:280});
       if(!t) return;
-      try { await rpc("post_moment",{text:t}); } catch(e){}
+      var img = await askText({title:"配图描述（可选）", placeholder:"如：海边的晚霞；留空则不配图", max:60});
+      try { await rpc("post_moment",{text:t, imageDesc:(img||"")}); } catch(e){}
       try { var g = await rpc("moments"); if(g&&g.posts) data.moments = g.posts; } catch(e){}   // refetch moments only (not everything)
       render();
     }
-    function doLike(id){   // optimistic: reflect instantly, reconcile via poll (server dedups)
+    function doLike(id){   // optimistic toggle: 点赞/取消赞（server 幂等，poll 校正）
+      var liked = false;
       (data.moments||[]).forEach(function(p){
-        if(String(p.id)===String(id)){ p.likes = p.likes||[]; if(p.likes.indexOf(me())<0) p.likes.push(me()); }
+        if(String(p.id)===String(id)){ p.likes = p.likes||[]; var i = p.likes.indexOf(me());
+          if(i>=0){ p.likes.splice(i,1); liked = false; } else { p.likes.push(me()); liked = true; } }
       });
       render();
-      return rpc("moment_like",{post_id:id}).catch(function(){});
+      return rpc(liked ? "moment_like" : "moment_unlike", {post_id:id}).catch(function(){});
     }
-    async function doComment(id){
-      var t = await askText({title:"评论", placeholder:"说点什么…", max:200});
+    async function doComment(id, replyTo){
+      var t = await askText({title: replyTo ? ("回复 "+replyTo) : "评论", placeholder:"说点什么…", max:200});
       if(!t) return;
       (data.moments||[]).forEach(function(p){
-        if(String(p.id)===String(id)){ p.comments = p.comments||[]; p.comments.push({author:me(), text:t, replyTo:""}); }
+        if(String(p.id)===String(id)){ p.comments = p.comments||[]; p.comments.push({author:me(), text:t, replyTo:(replyTo||"")}); }
       });
       render();
-      rpc("moment_comment",{post_id:id, text:t}).catch(function(){});
+      rpc("moment_comment",{post_id:id, text:t, reply_to:(replyTo||"")}).catch(function(){});
     }
     render();
     // characters react asynchronously (LLM comment/like tools) — poll briefly and re-render

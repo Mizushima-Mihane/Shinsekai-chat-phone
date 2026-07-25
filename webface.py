@@ -1022,6 +1022,10 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return _moment_comment(args.get("post_id"), str(args.get("text", "")), str(args.get("reply_to", "")))
         if cmd == "moment_like":
             return _moment_like(args.get("post_id"))
+        if cmd == "moment_unlike":
+            from plugins.shinsekai_chat_phone import phone_core
+            _pid = _coerce_int(args.get("post_id"))
+            return {"ok": bool(_pid and phone_core.moment_remove_like(_pid, _player_name()))}
         if cmd == "groups":
             return {"groups": _groups()}
         if cmd == "group":

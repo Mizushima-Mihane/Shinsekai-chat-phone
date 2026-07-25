@@ -27,8 +27,15 @@ def set_session_dir(d: Path) -> None:
 
 
 def _session_file() -> Path:
-    base = _session_dir if _session_dir is not None else Path(
-        "data/plugins/com.shinsekai.chat_phone/_default")
+    if _session_dir is not None:
+        base = _session_dir
+    else:
+        try:
+            from plugins.shinsekai_chat_phone import phone_core
+
+            base = phone_core.session_dir()
+        except Exception:
+            base = Path("data/plugins/com.shinsekai.chat_phone/_default")
     return base / "phone_session.json"
 
 
@@ -75,7 +82,10 @@ def get_player_name() -> str:
 
 
 def get_player_signature() -> str:
-    return str(load_settings().get("player_signature", "") or "").strip()
+    settings = load_settings()
+    return str(
+        settings.get("player_signature", settings.get("signature", "")) or ""
+    ).strip()
 
 
 def set_player_profile(name: str, signature: str = "") -> None:

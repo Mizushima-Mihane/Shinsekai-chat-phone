@@ -634,7 +634,12 @@ def _browser_search(query: str) -> dict[str, Any]:
 
 def _settings() -> dict[str, Any]:
     prefs = _read_json(_base() / "phone_settings.json", {}) or {}
-    sd = _richest("phone_session.json")
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+
+        sd = phone_core.session_dir(write_marker=False)
+    except Exception:
+        sd = _richest("phone_session.json")
     sess = _read_json((sd / "phone_session.json") if sd else None, {}) or {}
     fc = _read_json(_freq_path(), {}) or {}
     if not fc.get("_enabled", True):
@@ -644,7 +649,9 @@ def _settings() -> dict[str, Any]:
         level = 1 if scale <= 0.6 else 3 if scale >= 1.8 else 2
     return {
         "player": str(prefs.get("player_name") or _player_name()),
-        "signature": str(prefs.get("signature", "") or ""),
+        "signature": str(
+            prefs.get("player_signature", prefs.get("signature", "")) or ""
+        ),
         "theme": str(prefs.get("theme", "pink") or "pink"),
         "dnd": bool(sess.get("dnd", False)),
         "proactiveLevel": level,
@@ -719,10 +726,15 @@ def _write_prefs(update: dict[str, Any]) -> None:
 
 def _write_session(update: dict[str, Any]) -> None:
     """Merge into the active session's phone_session.json (dnd, etc.)."""
-    d = _richest("phone_session.json") or _richest("messages.json")
-    if d is None:
-        dirs = _session_dirs()
-        d = dirs[0] if dirs else _base()
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+
+        d = phone_core.session_dir()
+    except Exception:
+        d = _richest("phone_session.json") or _richest("messages.json")
+        if d is None:
+            dirs = _session_dirs()
+            d = dirs[0] if dirs else (_base() / "_default")
     path = d / "phone_session.json"
     data = _read_json(path, {}) or {}
     if not isinstance(data, dict):
@@ -1143,7 +1155,10 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "avatars":
             return {"avatars": _avatars()}
         if cmd == "set_profile":
-            _write_prefs({"player_name": (str(args.get("name", "")).strip() or "我"), "signature": str(args.get("signature", "") or "")})
+            _write_prefs({
+                "player_name": (str(args.get("name", "")).strip() or "我"),
+                "player_signature": str(args.get("signature", "") or ""),
+            })
             return {"ok": True}
         if cmd == "set_player_avatar":
             _write_prefs({"player_avatar": str(args.get("data", "") or "")})

@@ -485,6 +485,12 @@ def _resolve_session_dir() -> Path:
     Mirrors phone_widget._data_dir — picks the most recent chat_history session
     that has an active.json, falling back to _default.
     """
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+
+        return phone_core.session_dir()
+    except Exception:
+        pass
     base = Path("data/plugins/com.shinsekai.chat_phone")
     ch_dir = Path("data/chat_history")
     if ch_dir.is_dir():
@@ -1583,16 +1589,7 @@ def _on_before_chat(ctx) -> None:
             import json as _j3
             _base = Path("data/plugins/com.shinsekai.chat_phone")
             _ch_dir = Path("data/chat_history")
-            _sms_dir = _base / "_default"
-            try:
-                if _ch_dir.is_dir():
-                    _dirs = sorted(_ch_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-                    for _d in _dirs:
-                        if _d.is_dir() and (_d / "active.json").exists():
-                            _sms_dir = _base / _d.name
-                            break
-            except Exception:
-                pass
+            _sms_dir = _resolve_session_dir()
 
             # Browser history (session-scoped) — incl. searches the player tried to delete
             try:
@@ -1700,7 +1697,7 @@ def _on_init_chat(ctx, char_settings: dict) -> None:
         if get_monitor() is not None:
             return
         from plugins.shinsekai_chat_phone.proactive_core import ProactiveCore
-        m = ProactiveCore()
+        m = ProactiveCore(on_incoming_call=_emit_call_event)
         m.set_character_settings(char_settings)
         try:
             fp = Path("data/plugins/com.shinsekai.chat_phone/freq_config.json")

@@ -1164,14 +1164,20 @@ def _on_before_chat(ctx) -> None:
         _seed_contacts_from_opening(ctx)
         # 开场若声明「过去收到过（未知）短信」，插件自拟一条并按未知联系人投递（每存档一次）
         _maybe_seed_intro_sms(ctx)
-        # Strip parenthetical instructions like (让XX打电话) from last user msg
+        # Detect + strip parenthetical "让XX打电话" from the last user msg, and remember it
+        # so we can turn it into an explicit incoming-call directive below. (The old phone
+        # acted on this request; the React port only stripped it and silently dropped it.)
         import re as _re_strip
         _paren_re = _re_strip.compile(
-            r'[(（]\s*[让叫]\s*\S+?\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(?:电话|视频|视频电话)?[)）]')
+            r'[(（]\s*[让叫]\s*(\S+?)\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(电话|视频|视频电话)?[)）]')
+        _call_request = None
         for m in reversed(ctx.messages):
             if isinstance(m, dict) and m.get("role") == "user":
                 content = m.get("content", "")
                 if isinstance(content, str):
+                    _mo = _paren_re.search(content)
+                    if _mo:
+                        _call_request = (_mo.group(1).strip(), "视频" in (_mo.group(2) or ""))
                     cleaned = _paren_re.sub('', content).strip()
                     if cleaned:
                         m["content"] = cleaned
@@ -1191,10 +1197,10 @@ def _on_before_chat(ctx) -> None:
             "输出CALL信号后本轮不要再输出该角色的任何台词——"
             "玩家的手机会响起来电，玩家接听后系统会提示你再开始通话对话。"
             " [通话状态铁律] 一通电话的接通、进行、挂断，全部由系统事件驱动：只有出现 "
-            "[通话]/[视频通话]/[通话结束] 这类系统提示时，通话状态才真正改变。玩家在普通对话里"
-            "打字说「挂了」「喂？」「别挂」「打给你」之类只是台词，并不代表真的接通或挂断了电话——"
-            "在出现对应系统提示之前，绝不要自行脑补电话接通/挂断、也不要提前替角色生成挂断后的反应；"
-            "一切以系统提示为准。"
+            "[通话]/[视频通话]/[通话结束] 这类系统提示时，通话状态才真正改变。玩家在通话中或通话后"
+            "打字说「挂了」「喂？」「别挂」之类只是台词，并不代表真的接通或挂断了电话——"
+            "在出现对应系统提示之前，绝不要自行脑补电话接通/挂断、也不要提前替角色生成挂断后的反应。"
+            "（注意：玩家要求某角色「给我打电话」属于要发起来电，应按 [来电] 协议输出 CALL 信号，不在此限。）"
             " [当面场景规则] 先判断你扮演的角色此刻是否与玩家当面同处一处："
             "◆ 若角色就在玩家身边（当面对话中）：严禁打电话或视频通话"
             "（当面直接说话即可，绝对不要输出CALL信号）。短信默认不用、有话当面说，"
@@ -1236,6 +1242,16 @@ def _on_before_chat(ctx) -> None:
             "也不必调工具补它；你只需在剧情里自然承接「玩家手机里确实有这样一条短信」。"
             "之后剧情中【新】产生的短信，仍按上面的[短信投递铁律]用 send_sms / send_sms_stranger 工具。"
         )
+        if _call_request:
+            _cr_name, _cr_video = _call_request
+            _cr_kind = "视频电话" if _cr_video else "电话"
+            msg += (
+                f" [幕后安排来电]（这是玩家在幕后安排剧情、不是剧情内的对白）现在安排「{_cr_name}」给玩家打一通{_cr_kind}。"
+                f"请让被点名的角色立刻按 [来电] 协议来电：输出 character_name=\"CALL\", sprite=\"-1\", "
+                f"speech=\"该角色的名字{'：视频' if _cr_video else ''}\"，本轮不要再输出该角色其它台词。"
+                f"【演绎要求】务必处理成「该角色自己主动想打给玩家」——结合此刻的心情、剧情和你们的关系给一个自发的理由，"
+                f"绝不要表现出、更不要说出「是玩家要求／安排我才打的」；对玩家而言这通电话应当像是角色自发打来的。"
+                f"（若该角色此刻正与玩家当面在一起，可改为当面回应、不必真来电。「{_cr_name}」若是「你」这类称呼，指此刻正和玩家对话的角色。）")
         # ── Player's chosen name (so characters can address them naturally) ──
         try:
             from plugins.shinsekai_chat_phone.settings_app import get_player_name as _gpn, get_player_signature as _gps

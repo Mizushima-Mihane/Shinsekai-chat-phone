@@ -425,8 +425,21 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
                             f'请让{name}结合人设自然反应（困惑、警惕或好奇皆可），不要假装早就认识对方。'
                             f'请调用 send_sms 工具回复，不要输出对话。')
         else:
-            runtime_text = (f'[短信] {name}收到了你的短信："{text}"。'
-                            f'请调用 send_sms 工具回复，不要输出对话。')
+            convo_lines = []
+            try:
+                for _m in phone_core.messages_for(name)[-12:]:
+                    if not isinstance(_m, dict):
+                        continue
+                    _mt = str(_m.get("text", "")).replace("\n", " ").strip()
+                    if _mt:
+                        convo_lines.append(("玩家" if _m.get("is_user") else name) + "：" + _mt)
+            except Exception:
+                pass
+            convo = "\n".join(convo_lines) if convo_lines else f'玩家：{text}'
+            runtime_text = (f'[短信] 玩家给{name}发了新短信。你们最近的短信往来如下'
+                            f'（按时间先后，最后一条是玩家刚发的）：\n{convo}\n'
+                            f'请{name}结合以上短信上下文连贯地回复——延续话题、记得前面聊过的内容，别答非所问。'
+                            f'调用 send_sms 工具回复，不要输出对话。')
         threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
                          daemon=True, name="phone-sms-trigger").start()
     except Exception:

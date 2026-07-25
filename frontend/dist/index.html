@@ -31,7 +31,7 @@
 
   .phone{width:100%;height:100%;background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
   .statusbar{display:flex;align-items:center;justify-content:space-between;height:32px;flex:0 0 auto;
-    padding:0 16px;color:var(--soft);font-size:11.5px;font-weight:700;background:rgba(241,237,244,.7)}
+    padding:0 16px;color:var(--soft);font-size:11.5px;font-weight:700;background:var(--surface)}
   .statusbar .sb-brand{display:flex;align-items:center;gap:5px;color:var(--accent-ink);letter-spacing:.2px}
   .statusbar .heart{width:13px;height:13px;display:inline-block;background-color:var(--accent-2);-webkit-mask:center/contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.1 10.55 19.8C5.4 15.16 2 12.08 2 8.3 2 5.22 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.22 22 8.3c0 3.78-3.4 6.86-8.55 11.51L12 21.1Z'/%3E%3C/svg%3E");mask:center/contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21.1 10.55 19.8C5.4 15.16 2 12.08 2 8.3 2 5.22 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.22 22 8.3c0 3.78-3.4 6.86-8.55 11.51L12 21.1Z'/%3E%3C/svg%3E")}
   .statusbar .sb-batt{display:flex;align-items:center;gap:5px}
@@ -85,7 +85,7 @@
   .charset-hero{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px}
   .charset-name{font-size:17px;color:#6f637a;font-weight:700}
   .cg-name{padding:14px}
-  .cg-name input{width:100%;height:40px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:14px;outline:0}
+  .cg-name input{width:100%;height:40px;border:0;border-radius:12px;padding:0 12px;background:var(--bubble-in);box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:14px;outline:0}
   .cg-pick.on{background:var(--bubble-out)}
   .cg-check{flex:0 0 auto;width:22px;height:22px;display:grid;place-items:center;color:var(--accent-2);font-weight:700;font-size:14px}
   .dial-row{gap:8px}
@@ -105,14 +105,14 @@
   .plus-item:active{background:var(--bubble-out);transform:scale(.97)}
   .pi-ic{flex:0 0 auto;display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:var(--pink);color:var(--accent-2);font-size:14px}
   .bubble.imgb{display:flex;flex-direction:column;gap:5px;align-items:flex-start}
-  .imgph{width:66px;height:50px;border-radius:9px;background:linear-gradient(135deg,#efe2e8,#e0d8ea);display:grid;place-items:center;font-size:22px}
+  .imgph{width:66px;height:50px;border-radius:9px;background:linear-gradient(135deg,var(--pink),var(--bubble-out));display:grid;place-items:center;font-size:22px}
   .bubble.imgb small{opacity:.72;font-size:11px}
   .ask-ov{position:absolute;inset:0;z-index:40;display:grid;place-items:center;background:rgba(60,44,54,.28);opacity:0;transition:opacity .18s}
   .ask-ov.on{opacity:1}
   .ask-box{width:82%;max-width:250px;background:var(--bg);border-radius:18px;padding:16px;box-shadow:4px 6px 18px rgba(60,44,54,.3);transform:scale(.9);transition:transform .24s cubic-bezier(.34,1.56,.64,1)}
   .ask-ov.on .ask-box{transform:scale(1)}
   .ask-title{font-size:14px;font-weight:700;color:var(--accent-ink);margin-bottom:10px}
-  .ask-in{width:100%;box-sizing:border-box;border:0;border-radius:12px;padding:10px 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13.5px;outline:0;resize:none;font-family:inherit}
+  .ask-in{width:100%;box-sizing:border-box;border:0;border-radius:12px;padding:10px 12px;background:var(--bubble-in);box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13.5px;outline:0;resize:none;font-family:inherit}
   .ask-btns{display:flex;gap:8px;margin-top:12px}
   .ask-b{flex:1;height:38px;border:0;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;transition:transform .1s}
   .ask-b:active{transform:scale(.96)}
@@ -122,7 +122,7 @@
   .pm-img:active{background:#f0e7ec}
   .ask-text{font-size:12.5px;color:#7c7086;line-height:1.55;margin-bottom:2px}
   .add-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
-  .add-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
+  .add-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:var(--bubble-in);box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
   .add-go{flex:0 0 auto;height:38px;padding:0 16px;border:0;border-radius:12px;background:var(--accent-2);color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:transform .1s}
   .add-go:active{transform:scale(.95)}
   .qcall{cursor:pointer;transition:transform .08s}
@@ -153,9 +153,14 @@
   .msg p{margin:0;padding:9px 12px;border-radius:16px;font-size:13.5px;line-height:1.6;background:var(--bubble-in);box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text;cursor:text}
   .msg.in p{border-top-left-radius:6px}
   .msg.out p{background:var(--bubble-out);color:var(--accent-ink);border-top-right-radius:6px}
+  .bubble.typing{flex-direction:row;gap:4px;padding:11px 14px;align-items:center;background:var(--bubble-in);border-radius:16px;border-top-left-radius:6px;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);width:max-content}
+  .bubble.typing i{width:6px;height:6px;border-radius:50%;background:var(--soft);animation:typing-dot 1.2s infinite}
+  .bubble.typing i:nth-child(2){animation-delay:.2s}
+  .bubble.typing i:nth-child(3){animation-delay:.4s}
+  @keyframes typing-dot{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
   .gsys{width:max-content;max-width:82%;margin:12px auto;padding:4px 12px;border-radius:9px;background:rgba(248,246,250,.6);color:var(--muted);font-size:11px;text-align:center;line-height:1.5}
   .msg .gname{margin:0 0 3px 3px;color:var(--soft);font-size:11px}
-  .composer{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 14px 14px;border-top:1px solid rgba(203,196,212,.5);background:rgba(241,237,244,.92)}
+  .composer{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 14px 14px;border-top:1px solid rgba(203,196,212,.5);background:var(--surface)}
   .composer .field{flex:1;display:flex;align-items:center;height:40px;padding:0 12px;border-radius:13px;box-shadow:inset 2px 2px 5px var(--lo),inset -2px -2px 5px var(--hi)}
   .composer input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font-size:13px}
   .send{width:40px;height:40px;border-radius:13px;background:var(--bg);color:var(--accent);font-size:16px;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi)}
@@ -167,10 +172,10 @@
   .moment .who b{font-size:15px}
   .moment .who small{display:block;margin-top:2px;color:var(--muted);font-size:11px}
   .moment>p{margin:12px 2px;font-size:14px;line-height:1.7}
-  .moment .imgdesc{margin:10px 2px;padding:14px;border-radius:13px;background:#ece6ef;color:var(--soft);font-size:12px;text-align:center}
+  .moment .imgdesc{margin:10px 2px;padding:14px;border-radius:13px;background:var(--bubble-out);color:var(--soft);font-size:12px;text-align:center}
   .moment hr{border:0;border-top:1px solid rgba(203,196,212,.5);margin:12px 0 0}
   .moment .likes{padding:10px 2px 0;color:var(--accent-2);font-size:12.5px}
-  .moment .cmts{margin-top:8px;border-radius:12px;background:#efeaf2;padding:2px 10px}
+  .moment .cmts{margin-top:8px;border-radius:12px;background:var(--bubble-in);padding:2px 10px}
   .moment .cmts div{padding:6px 0;font-size:12.5px;line-height:1.5;border-bottom:1px solid rgba(203,196,212,.35)}
   .moment .cmts div:last-child{border-bottom:0}
   .moment .cmts b{color:var(--accent-ink)}
@@ -218,7 +223,7 @@
   .br-hist-q{flex:1;min-width:0;text-align:left;padding:9px 0;color:var(--ink);font-size:13.5px;background:none;border:0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .br-hist-x{flex:0 0 auto;width:26px;height:26px;border:0;border-radius:8px;background:none;color:var(--muted);font-size:12px;cursor:pointer}
   .br-hist-x:active{background:var(--bubble-out)}
-  .br-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
+  .br-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:var(--bubble-in);box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
   .br-q{margin:12px 14px 4px;color:var(--soft);font-size:12px;font-weight:700}
   .br-item{margin:8px 14px;padding:14px;border-radius:14px;background:var(--card);box-shadow:2px 3px 9px rgba(105,77,98,.08),-2px -2px 7px rgba(255,255,255,.6)}
   .br-item b{font-size:14px;color:var(--accent-ink);line-height:1.4}
@@ -226,7 +231,7 @@
   .br-item p{margin:7px 0 0;font-size:12.5px;line-height:1.6;color:var(--soft)}
   .br-loading{margin:16px;text-align:center;color:var(--muted);font-size:12px}
   .music-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding:34px 24px}
-  .music-art{width:120px;height:120px;border-radius:28px;display:grid;place-items:center;font-size:52px;color:#8a7ea0;background:linear-gradient(135deg,#e7e0f0,#f1e4ec);box-shadow:5px 7px 18px rgba(105,77,98,.16),-3px -3px 10px rgba(255,255,255,.7)}
+  .music-art{width:120px;height:120px;border-radius:28px;display:grid;place-items:center;font-size:52px;color:var(--accent-2);background:linear-gradient(135deg,var(--pink),var(--bubble-out));box-shadow:5px 7px 18px rgba(105,77,98,.16),-3px -3px 10px rgba(255,255,255,.7)}
   .music-hint{margin-top:6px;color:var(--soft);font-size:13px;font-weight:600}
   .music-path{max-width:100%;word-break:break-all;color:var(--muted);font-size:11px;text-align:center;line-height:1.5}
   .music-song{margin-top:2px;color:var(--ink);font-size:15px;font-weight:600;text-align:center;max-width:100%;padding:0 12px;word-break:break-all}
@@ -262,7 +267,7 @@
   .section-title{margin:14px 16px 6px;color:var(--soft);font-size:11px;font-weight:700}
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
   .fld span{color:var(--soft);font-size:12px}
-  .fld input{height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:13px;outline:0}
+  .fld input{height:38px;border:0;border-radius:12px;padding:0 12px;background:var(--bubble-in);box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:13px;outline:0}
   .primary-btn{display:grid;place-items:center;width:100%;height:40px;border-radius:12px;background:var(--bubble-out);color:var(--accent-ink);font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi)}
   .primary-btn:active{box-shadow:inset 2px 2px 5px var(--lo),inset -2px -2px 5px var(--hi)}
   .toggle{width:46px;height:26px;border-radius:13px;background:#ded5e2;position:relative;transition:background .16s}
@@ -365,6 +370,7 @@
     var k = String(key||"").toLowerCase();
     if(k!=="baby") k = "pink";   // only two themes: 粉 (default :root) + 蓝 (baby)
     document.documentElement.setAttribute("data-theme", k);
+    try { postHost("theme","theme",{theme:k}); } catch(e){}   // 让宿主悬浮壳/底部栏也跟随主题
   }
   async function load(){
     try { data = await rpc("all"); loaded = true; } catch(e){ data = {}; }
@@ -510,16 +516,28 @@
 
   // ── Messages ──
   VIEWS.messages = async function(){
-    var snap = data;
-    var rows = (snap.threads||[]).map(function(t){
-      return '<button class="row" data-name="'+esc(t.name)+'">'+avatar(t.name)+
-        '<span class="grow"><b>'+esc(disp(t.name))+'</b><small>'+esc(t.preview||"")+'</small></span>'+
-        (t.unread ? '<span class="badge">'+t.unread+'</span>' : '')+'</button>';
-    }).join("");
-    screen.innerHTML = header("短信") + '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有短信。</div>' : '<div class="empty">加载中…</div>'))+'</div>';
-    wireBack();
-    screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
+    function draw(){
+      var rows = (data.threads||[]).map(function(t){
+        return '<button class="row" data-name="'+esc(t.name)+'">'+avatar(t.name)+
+          '<span class="grow"><b>'+esc(disp(t.name))+'</b><small>'+esc(t.preview||"")+'</small></span>'+
+          (t.unread ? '<span class="badge">'+t.unread+'</span>' : '')+'</button>';
+      }).join("");
+      screen.innerHTML = header("短信") + '<div class="scroll">'+
+        (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有短信。</div>' : '<div class="empty">加载中…</div>'))+'</div>';
+      wireBack();
+      screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
+    }
+    draw();
+    var myGen = navGen, seen = JSON.stringify(data.threads||[]);
+    (async function(){   // 停留在短信列表时持续刷新，角色新发的短信会实时冒泡上来
+      while(navGen===myGen && current.view==="messages"){
+        await new Promise(function(r){ setTimeout(r,5000); });
+        if(navGen!==myGen || current.view!=="messages") break;
+        var g=null; try { g = await rpc("threads"); } catch(e){}
+        if(navGen!==myGen || current.view!=="messages") break;
+        if(g && g.threads){ var s=JSON.stringify(g.threads); if(s!==seen){ seen=s; data.threads=g.threads; draw(); } }
+      }
+    })();
   };
 
   VIEWS.thread = async function(name){
@@ -551,10 +569,12 @@
         return '<div class="bubble imgb"><div class="imgph">🖼</div>'+(d?'<small>'+esc(d)+'</small>':'')+'</div>'; }
       return '<div class="bubble"><p>'+esc(t)+'</p></div>';
     }
+    var typingActive = false;
     function draw(){
       box.innerHTML = (msgs.length ? msgs.map(function(m){
         return '<div class="msg '+(m.isUser?"out":"in")+'">'+avatar(m.isUser?"我":name,true)+bubbleHTML(m)+'</div>'; }).join("")
-        : '<div class="empty">和 '+esc(name)+' 说点什么吧。</div>');
+        : '<div class="empty">和 '+esc(name)+' 说点什么吧。</div>')
+        + (typingActive ? '<div class="msg in">'+avatar(name,true)+'<div class="bubble typing"><i></i><i></i><i></i></div></div>' : '');
       box.scrollTop = box.scrollHeight;
     }
     var unknownAtOpen = isUnknown(name);
@@ -571,14 +591,18 @@
     draw();
     // After sending, the character's reply lands async in messages.json — poll the
     // thread for ~30s and redraw when new lines arrive (multi-message replies too).
-    var polling = false;
+    var polling = false, pollGen = navGen;
     async function pollReply(){
       if(polling) return; polling = true;
       try {
-        for(var i=0;i<15;i++){
-          await new Promise(function(r){ setTimeout(r, 2000); });
-          if(current.view!=="thread" || current.arg!==name) break;   // navigated away
+        // 停留在会话里就持续轮询：角色的回复、以及主动发来的新短信都会实时出现
+        while(navGen===pollGen && current.view==="thread" && current.arg===name){
+          await new Promise(function(r){ setTimeout(r, 2500); });
+          if(navGen!==pollGen || current.view!=="thread" || current.arg!==name) break;   // navigated away
           var got=null; try { got = await rpc("thread",{name:name}); } catch(e){}
+          var tp=null; try { tp = await rpc("typing"); } catch(e){}
+          var wasTyping = typingActive;
+          typingActive = !!(tp && tp.typing && tp.typing[name]);
           var arr = got && got.messages;
           var newMsgs = arr && arr.length > msgs.length;
           if(newMsgs){
@@ -591,12 +615,13 @@
             unknownAtOpen = false;
             data.unknown = (data.unknown||[]).filter(function(x){ return String(x) !== String(name); });
             refreshIdentity();
-          } else if(newMsgs){
+          } else if(newMsgs || typingActive !== wasTyping){
             draw();
           }
         }
       } finally { polling = false; }
     }
+    pollReply();   // 进入会话即持续轮询，不必等玩家先发消息（角色主动来的短信也会实时显示）
     screen.querySelector("#cf").onsubmit = async function(ev){
       ev.preventDefault();
       var input = screen.querySelector("#ci"); var text = (input.value||"").trim();
@@ -717,7 +742,11 @@
       var m = el.getAttribute("data-mode");
       if(m === "manual"){
         if(manual) return;
-        try { await rpc("set_char_freq",{name:name, level:Math.max(1,Math.min(10,lvl||2))}); } catch(e){}   // 直接开手动，不再弹确认框
+        var yes = await askConfirm({title:"开启手动调节？",
+          text:"手动指定 "+disp(name)+" 每小时主动联系你的次数后，有些角色（尤其病娇人设）或许会察觉这种不自然的规律——确定要开启吗？",
+          ok:"开启手动调节"});
+        if(!yes) return;
+        try { await rpc("set_char_freq",{name:name, level:Math.max(1,Math.min(10,lvl||2))}); } catch(e){}
       } else {
         if(!manual) return;
         try { await rpc("clear_char_freq",{name:name}); } catch(e){}
@@ -847,7 +876,7 @@
         '</b><small>'+(timeAgo(p.ts)||"动态")+'</small></div></div>'+momentText(p.text)+img+
         ((likes||cmts)?'<hr>':'')+likes+cmts+
         '<div class="moment-acts"><button class="mact" data-like="'+esc(String(p.id))+'">♡ 赞</button>'+
-        '<button class="mact" data-cmt="'+esc(String(p.id))+'">💬 评论</button></div></article>';
+        '<button class="mact" data-cmt="'+esc(String(p.id))+'">评论</button></div></article>';
     }
     function render(){
       var cards = (data.moments||[]).map(cardHTML).join("");
@@ -892,8 +921,8 @@
     (function(){
       var myGen = navGen, seen = JSON.stringify(data.moments||[]);
       (async function(){
-        for(var i=0;i<10;i++){
-          await new Promise(function(r){ setTimeout(r,2500); });
+        while(navGen===myGen && current.view==="moments"){   // 停留期间持续刷新，切走即停
+          await new Promise(function(r){ setTimeout(r,5000); });
           if(navGen!==myGen || current.view!=="moments") break;
           var got=null; try { got = await rpc("moments"); } catch(e){}
           if(navGen!==myGen || current.view!=="moments") break;

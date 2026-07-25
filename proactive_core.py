@@ -329,13 +329,13 @@ class ProactiveCore:
             from plugins.shinsekai_chat_phone import phone_core
             sent = 0
             for i in range(count):
-                if i > 0 and self._stop.wait(random.uniform(10.0, 30.0)):
+                if self._stop.is_set():
                     break  # monitor stopped mid-burst
                 text = self._generate_message(name)
                 if not text:
                     continue
                 try:
-                    phone_core.deliver_sms(name, text)
+                    phone_core.deliver_sms_paced(name, text)   # 首条1-3s、后续+2-4s，像真人打字
                     phone_core.record_pending_proactive(name, text)
                     sent += 1
                 except Exception:

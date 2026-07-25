@@ -13,11 +13,29 @@
     --hi:#f8f6fa; --lo:#d5ceda;
     --font:"M PLUS Rounded 1c","PingFang SC","Microsoft YaHei",sans-serif;
   }
+  html[data-theme="light"]{
+    --bg:#f1eef2; --ink:#4a4550; --muted:#9a94a0; --soft:#a59daf;
+    --surface:#faf9fb; --card:#ffffff; --bubble-in:#f2eff3; --bubble-out:#ecdfe6;
+    --accent:#b0708a; --accent-2:#c07a94; --accent-ink:#8a5d70; --pink:#f6e8ee;
+    --hi:#ffffff; --lo:#e0dae4;
+  }
+  html[data-theme="baby"]{
+    --bg:#e5edf4; --ink:#46525d; --muted:#8f9fae; --soft:#93a4b3;
+    --surface:#edf3f9; --card:#f5f9fc; --bubble-in:#eef5fb; --bubble-out:#d7e6f2;
+    --accent:#5f8fb0; --accent-2:#6f9dbd; --accent-ink:#4d7691; --pink:#dcecf7;
+    --hi:#f7fbfe; --lo:#ccd8e2;
+  }
+  html[data-theme="dark"]{
+    --bg:#1b1b1d; --ink:#e7e3eb; --muted:#8b8591; --soft:#9a92a2;
+    --surface:#242426; --card:#2a2a2e; --bubble-in:#2d2d31; --bubble-out:#3c303a;
+    --accent:#cf90aa; --accent-2:#d998b1; --accent-ink:#e6bccd; --pink:#3a2f38;
+    --hi:#2f2f33; --lo:#131315;
+  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   button:focus,button:focus-visible{outline:none}
   ::selection{background:rgba(185,111,136,.32);color:#5c5366}
   ::-moz-selection{background:rgba(185,111,136,.32);color:#5c5366}
-  html,body{margin:0;height:100%;background:#ebe6ee}
+  html,body{margin:0;height:100%;background:var(--bg)}
   body{font-family:var(--font);color:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased;
     user-select:none;-webkit-user-select:none}
   button,input,textarea{font:inherit}
@@ -329,9 +347,15 @@
   var data = {};
   var avatarsCache = {};   // uploaded avatars (base64) — fetched once, kept out of every load()
   var loaded = false;      // 首个 all() 回来前，列表页显示「加载中」而不是「还没有…」
+  function applyTheme(key){
+    var k = String(key||"").toLowerCase();
+    if(k!=="light" && k!=="baby" && k!=="dark") k = "pink";
+    document.documentElement.setAttribute("data-theme", k);
+  }
   async function load(){
     try { data = await rpc("all"); loaded = true; } catch(e){ data = {}; }
     data.avatars = avatarsCache;                      // reattach cached avatars (all() no longer ships them)
+    try { applyTheme(data.settings && data.settings.theme); } catch(e){}
   }
   async function loadAvatars(){
     try { var a = await rpc("avatars"); if(a && a.avatars){ avatarsCache = a.avatars; data.avatars = avatarsCache; } } catch(e){}
@@ -846,10 +870,10 @@
   // ── Settings (editable) ──
   VIEWS.settings = async function(){
     var s = data.settings || {};
-    var themes = [["白","#FFFAFA"],["婴儿蓝","#D4E9F6"],["浅粉","#FFE4E1"],["淡紫","#E8D5F5"],["黑","#2C2C2E"]];
+    var themes = [["粉","pink","#f2dfe7"],["白","light","#f6e8ee"],["婴儿蓝","baby","#d4e9f6"],["黑","dark","#2c2c2e"]];
     var sw = themes.map(function(t){
-      var sel = (s.theme||"").toUpperCase()===t[1].toUpperCase() ? " sel":"";
-      return '<button class="tsw'+sel+'" data-theme="'+t[1]+'" title="'+esc(t[0])+'" style="background:'+t[1]+'"></button>';
+      var sel = (s.theme||"pink").toLowerCase()===t[1] ? " sel":"";
+      return '<button class="tsw'+sel+'" data-theme="'+t[1]+'" title="'+esc(t[0])+'" style="background:'+t[2]+'"></button>';
     }).join("");
     screen.innerHTML = header("设置") + '<div class="scroll">'+
       '<div class="section-title">个人资料</div><div class="set-card pad">'+
@@ -901,7 +925,9 @@
     if(yan) yan.onclick = function(){ var on=!yan.classList.contains("on"); yan.classList.toggle("on",on); yan.setAttribute("aria-checked",on?"true":"false"); rpc("set_yandere",{on:on}); };
     screen.querySelectorAll("[data-theme]").forEach(function(el){ el.onclick=function(){
       screen.querySelectorAll("[data-theme]").forEach(function(x){ x.classList.remove("sel"); }); el.classList.add("sel");
-      rpc("set_theme",{theme:el.getAttribute("data-theme")}); };
+      var k = el.getAttribute("data-theme"); applyTheme(k);
+      if(data.settings) data.settings.theme = k;
+      rpc("set_theme",{theme:k}); };
     });
     var pro = screen.querySelector("#s-pro");
     if(pro) pro.onclick = function(){ var on=!pro.classList.contains("on"); pro.classList.toggle("on",on); pro.setAttribute("aria-checked",on?"true":"false"); rpc("set_freq",{level:on?2:0}); };

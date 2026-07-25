@@ -636,7 +636,7 @@ def _settings() -> dict[str, Any]:
     return {
         "player": str(prefs.get("player_name") or _player_name()),
         "signature": str(prefs.get("signature", "") or ""),
-        "theme": str(prefs.get("theme", "#FFFAFA") or "#FFFAFA"),
+        "theme": str(prefs.get("theme", "pink") or "pink"),
         "dnd": bool(sess.get("dnd", False)),
         "proactiveLevel": level,
         "proactiveEnabled": bool(fc.get("_enabled", True)),
@@ -1085,7 +1085,7 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             _write_session({"dnd": bool(args.get("on"))})
             return {"ok": True}
         if cmd == "set_theme":
-            _write_prefs({"theme": str(args.get("theme", "") or "#FFFAFA")})
+            _write_prefs({"theme": str(args.get("theme", "") or "pink")})
             return {"ok": True}
         if cmd == "set_freq":
             _set_freq(int(args.get("level", 2)))

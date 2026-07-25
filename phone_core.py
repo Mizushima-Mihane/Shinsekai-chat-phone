@@ -205,6 +205,38 @@ def deliver_sms(name: str, text: str, known: bool = True) -> bool:
         return True
 
 
+_sms_pace_lock = threading.Lock()
+_sms_pace_next: dict[str, float] = {}
+
+
+def deliver_sms_paced(name: str, text: str, known: bool = True) -> bool:
+    """Deliver a character SMS with human-like pacing: the first line lands right away, each
+    subsequent line to the SAME character is spaced 10-30s out (a background timer writes it
+    later). Lets a character fire off several texts in one LLM turn without them all popping
+    onto the player's screen at once. Falls back to an immediate write on any error."""
+    name = (name or "").strip()
+    text = (text or "").strip()
+    if _is_junk_name(name) or not text:
+        return False
+    import random
+    now = time.time()
+    with _sms_pace_lock:
+        base = max(now, _sms_pace_next.get(name, 0.0))
+        _sms_pace_next[name] = base + random.uniform(10.0, 30.0)
+    delay = base - now
+    if delay <= 0.05:
+        return deliver_sms(name, text, known)
+
+    def _later() -> None:
+        time.sleep(delay)
+        try:
+            deliver_sms(name, text, known)
+        except Exception:
+            pass
+    threading.Thread(target=_later, daemon=True, name="sms-paced").start()
+    return True
+
+
 def send_player_sms(name: str, text: str) -> bool:
     """The player sends an SMS from the web phone (is_user=True)."""
     name = (name or "").strip()

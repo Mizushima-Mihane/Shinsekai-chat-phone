@@ -245,12 +245,15 @@ class ProactiveCore:
         for name in contacts:
             if name not in valid:
                 continue
-            # 手动模式：玩家在角色设置里强行设了固定档位；自主模式：跟随好感度自然升温
-            if phone_core.is_manual_freq(name):
-                lvl = phone_core.get_char_freq(name)
-                if lvl == 0:
+            # 手动模式：玩家在角色设置里用拉杆指定了「每小时联系次数」(1-10)；
+            # 自主模式：跟随好感度自然升温
+            manual = phone_core.is_manual_freq(name)
+            if manual:
+                per_hour = phone_core.get_char_freq(name)
+                if per_hour <= 0:
                     continue  # 玩家手动关闭了该角色的主动联系
-                char_scale = {1: 0.5, 2: 1.0, 3: 2.0}.get(lvl, 1.0)
+                per_hour = max(1, min(10, int(per_hour)))
+                char_scale = per_hour / 5.0  # for moments / call scaling (≈1.0 at 5/hr)
             else:
                 # 自主：好感度即熟悉/亲密度，默认偏低(20)、随剧情升温，
                 # 天然实现"人与人交往不是一蹴而就、刚认识不该发很多消息"
@@ -258,6 +261,7 @@ class ProactiveCore:
                 if aff <= 0:
                     continue  # 好感度见底，该角色不再主动搭理玩家
                 char_scale = aff / 50.0  # 20→0.4, 50→1.0, 100→2.0
+                per_hour = 0
             # Moments: independent low-freq roll, unaffected by scene / no-double-text.
             if self._maybe_post_moment(name):
                 continue
@@ -270,21 +274,25 @@ class ProactiveCore:
                 yandere = is_character_yandere(name)
             except Exception:
                 yandere = False
-            # Absolute anti-spam cooldown: after one proactive SMS/call, stay quiet for a
-            # while so a character can't machine-gun the player. Yandere is more persistent
-            # (shorter), and higher affinity / level reaches out more often — but all bounded.
-            _reach_cd = (1200.0 if yandere else 2400.0) / max(0.6, min(1.6, char_scale))
+            # Absolute anti-spam cooldown. Manual mode honours the exact per-hour rate the
+            # player set (3600/N); auto mode scales an anti-machine-gun floor by affinity /
+            # yandere. Either way, one reach-out then quiet for the cooldown window.
+            if manual:
+                _reach_cd = 3600.0 / per_hour
+            else:
+                _reach_cd = (1200.0 if yandere else 2400.0) / max(0.6, min(1.6, char_scale))
             if now - self._last_reach.get(name, 0.0) < _reach_cd:
                 continue  # reached out recently — hold off this tick
             # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
             if self._maybe_call(name, scale * char_scale):
                 self._last_reach[name] = now
                 continue  # rang the player — don't also text this tick
-            # Don't double-text: a normal character who already reached out and hasn't been
-            # answered stays quiet (avoids "在吗?在吗?"). Yandere may follow up, but caps out.
+            # Don't double-text: a character who already reached out and hasn't been answered
+            # stays quiet (avoids "在吗?在吗?"). Yandere / 玩家手动设的高频 may follow up, but
+            # all cap out at 3 unanswered in a row.
             last = phone_core.last_message(name)
             if last is not None and not last.get("is_user"):
-                if not yandere:
+                if not yandere and not manual:
                     continue
                 streak = 0
                 for _m in reversed(phone_core.messages_for(name)[-8:]):
@@ -292,7 +300,13 @@ class ProactiveCore:
                         break
                     streak += 1
                 if streak >= 3:
-                    continue  # already 3 unanswered in a row — even yandere backs off
+                    continue  # already 3 unanswered in a row — back off even for yandere / manual
+            # Manual fires on schedule (the player asked for this rate); auto accumulates a
+            # probabilistic urge so it feels spontaneous. Both send a 1-3 line burst.
+            if manual:
+                self._urge[name] = 0.0
+                self._send_proactive_burst(name, now)
+                continue
             fc = fc_all.get(name, {}) or {}
             sms_base = fc.get("sms", 0.1) * scale * char_scale
             if yandere:
@@ -301,15 +315,35 @@ class ProactiveCore:
             self._urge[name] = urge
             if urge > 0.8 + random.uniform(-0.2, 0.3):
                 self._urge[name] = random.uniform(0, 0.3)
+                self._send_proactive_burst(name, now)
+
+    def _send_proactive_burst(self, name: str, now: float) -> None:
+        """Deliver 1-3 proactive SMS as a burst, 10-30s apart, on a side thread so the tick
+        loop isn't blocked — mirrors a person firing off a couple of texts in a row rather
+        than one wall-of-text. First line is immediate; each next line waits 10-30s. Each is
+        generated in turn (seeing the ones already sent) so the burst stays coherent."""
+        self._last_reach[name] = now  # claim the cooldown up front so the next tick won't re-fire
+        count = random.randint(1, 3)
+
+        def _run() -> None:
+            from plugins.shinsekai_chat_phone import phone_core
+            sent = 0
+            for i in range(count):
+                if i > 0 and self._stop.wait(random.uniform(10.0, 30.0)):
+                    break  # monitor stopped mid-burst
                 text = self._generate_message(name)
-                if text:
-                    try:
-                        phone_core.deliver_sms(name, text)
-                        phone_core.record_pending_proactive(name, text)
-                        self._last_reach[name] = now
-                        logger.info("Proactive SMS from %s", name)
-                    except Exception:
-                        logger.debug("proactive deliver failed", exc_info=True)
+                if not text:
+                    continue
+                try:
+                    phone_core.deliver_sms(name, text)
+                    phone_core.record_pending_proactive(name, text)
+                    sent += 1
+                except Exception:
+                    logger.debug("proactive burst deliver failed", exc_info=True)
+            if sent:
+                logger.info("Proactive SMS burst (%d) from %s", sent, name)
+
+        threading.Thread(target=_run, daemon=True, name="proactive-burst").start()
 
     def _generate_message(self, name: str) -> str:
         from plugins.shinsekai_chat_phone import phone_core

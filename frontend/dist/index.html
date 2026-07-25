@@ -13,23 +13,11 @@
     --hi:#f8f6fa; --lo:#d5ceda; --av1:#c8bed2; --av2:#afa5bf;
     --font:"M PLUS Rounded 1c","PingFang SC","Microsoft YaHei",sans-serif;
   }
-  html[data-theme="light"]{
-    --bg:#f1eef2; --ink:#4a4550; --muted:#9a94a0; --soft:#a59daf;
-    --surface:#faf9fb; --card:#ffffff; --bubble-in:#f2eff3; --bubble-out:#ecdfe6;
-    --accent:#b0708a; --accent-2:#c07a94; --accent-ink:#8a5d70; --pink:#f6e8ee;
-    --hi:#ffffff; --lo:#e0dae4; --av1:#cdbfd0; --av2:#b6a5bf;
-  }
   html[data-theme="baby"]{
     --bg:#e5edf4; --ink:#46525d; --muted:#8f9fae; --soft:#93a4b3;
     --surface:#edf3f9; --card:#f5f9fc; --bubble-in:#eef5fb; --bubble-out:#d7e6f2;
     --accent:#5f8fb0; --accent-2:#6f9dbd; --accent-ink:#4d7691; --pink:#dcecf7;
     --hi:#f7fbfe; --lo:#ccd8e2; --av1:#a9c3d8; --av2:#8fb0c9;
-  }
-  html[data-theme="dark"]{
-    --bg:#1b1b1d; --ink:#e7e3eb; --muted:#8b8591; --soft:#9a92a2;
-    --surface:#242426; --card:#2a2a2e; --bubble-in:#2d2d31; --bubble-out:#3c303a;
-    --accent:#cf90aa; --accent-2:#d998b1; --accent-ink:#e6bccd; --pink:#3a2f38;
-    --hi:#2f2f33; --lo:#131315; --av1:#4a4550; --av2:#5c5366;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   button:focus,button:focus-visible{outline:none}
@@ -101,7 +89,7 @@
   .cg-pick.on{background:var(--bubble-out)}
   .cg-check{flex:0 0 auto;width:22px;height:22px;display:grid;place-items:center;color:var(--accent-2);font-weight:700;font-size:14px}
   .dial-row{gap:8px}
-  .dial-btn{flex:0 0 auto;height:30px;padding:0 14px;border:0;border-radius:15px;background:#e9dbe1;color:var(--accent-2);font-size:12.5px;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);cursor:pointer;transition:transform .08s}
+  .dial-btn{flex:0 0 auto;height:30px;padding:0 14px;border:0;border-radius:15px;background:var(--bubble-out);color:var(--accent-2);font-size:12.5px;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);cursor:pointer;transition:transform .08s}
   .dial-btn:active{transform:scale(.93)}
   .dial-btn.video{background:#dce6ea;color:#4a6b78}
   b.missed,small.missed{color:#c2607a}
@@ -140,7 +128,7 @@
   .qcall{cursor:pointer;transition:transform .08s}
   .qcall:active{transform:scale(.9)}
   /* ── Call screen ── */
-  .callscreen{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,#efeaf2,#e4dde8)}
+  .callscreen{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,var(--surface),var(--bg))}
   .yan-float{position:absolute;color:rgba(255,59,48,.9);font-weight:900;pointer-events:none;z-index:30;text-shadow:0 1px 4px rgba(0,0,0,.45);animation:yandrift 1.5s ease-in-out infinite alternate}
   @keyframes yandrift{from{transform:translate(0,0) rotate(-4deg)}to{transform:translate(8px,-12px) rotate(4deg)}}
   .yan-center{left:50%!important;top:44%!important;font-size:30px!important;background:rgba(0,0,0,.72);border-radius:16px;padding:12px 18px;color:#ff3b30;animation:yanpulse .5s ease-in-out infinite alternate}
@@ -188,7 +176,7 @@
   .moment .cmts b{color:var(--accent-ink)}
   .cmt-reply{border:0;background:transparent;color:var(--accent-2);font-size:11px;cursor:pointer;padding:0 2px;font-weight:600}
   .moment-acts{display:flex;gap:8px;margin-top:12px}
-  .mact{flex:1;height:32px;border:0;border-radius:10px;background:#efe7ec;color:var(--accent-2);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s}
+  .mact{flex:1;height:32px;border:0;border-radius:10px;background:var(--bubble-out);color:var(--accent-2);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s}
   .mact:active{transform:scale(.96);background:var(--bubble-out)}
 
   /* ── Settings ── */
@@ -202,23 +190,28 @@
   .set-note{margin:6px 6px;color:var(--muted);font-size:11.5px;line-height:1.6;text-align:center}
   .set-sub{margin-top:8px;color:var(--muted);font-size:11px;line-height:1.5}
   .freq-row{display:flex;gap:6px}
-  .freq-opt{flex:1;height:34px;border:0;border-radius:11px;background:#efe7ec;color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s,background .15s,color .15s}
+  .freq-opt{flex:1;height:34px;border:0;border-radius:11px;background:var(--bubble-out);color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .1s,background .15s,color .15s}
   .freq-opt:active{transform:scale(.95)}
   .freq-opt.on{background:var(--accent-2);color:#fff}
   .freq-opt:disabled{cursor:default}
   .freq-row.locked{opacity:.45}
   .mode-row{display:flex;gap:6px;margin-bottom:10px}
-  .mode-opt{flex:1;height:32px;border:0;border-radius:10px;background:#efe7ec;color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
+  .mode-opt{flex:1;height:32px;border:0;border-radius:10px;background:var(--bubble-out);color:var(--soft);font-size:12.5px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}
   .mode-opt.on{background:var(--accent-2);color:#fff}
   .aff-row{display:flex;align-items:center;gap:10px}
-  .aff-bar{flex:1;height:9px;border-radius:6px;background:#efe7ec;overflow:hidden}
+  .aff-bar{flex:1;height:9px;border-radius:6px;background:var(--bubble-out);overflow:hidden}
   .aff-fill{height:100%;border-radius:6px;background:var(--accent-2);transition:width .3s}
   .aff-val{flex:0 0 auto;font-size:13px;font-weight:700;color:var(--accent-2);min-width:26px;text-align:right}
+  .cf-slider{display:flex;align-items:center;gap:12px;margin:8px 2px 4px}
+  .cf-slider input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:4px;background:var(--bubble-out);outline:0}
+  .cf-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent-2);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  .cf-val{flex:0 0 auto;font-size:12.5px;color:var(--soft);white-space:nowrap}
+  .cf-val b{color:var(--accent-2);font-size:15px}
   .prof-av-row{display:flex;align-items:center;gap:12px;margin-bottom:12px}
   .prof-av{width:56px;height:56px;flex:0 0 auto;border-radius:18px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:20px;background:linear-gradient(145deg,var(--av1),var(--av2));background-size:cover;background-position:center}
   .prof-av.img{color:transparent}
   .prof-av-btn{padding:8px 14px;border-radius:11px;background:var(--accent-2);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
-  .prof-av-clear{padding:8px 12px;border-radius:11px;border:0;background:var(--bubble-out);color:#9a6b80;font-size:12.5px;font-weight:600;cursor:pointer}
+  .prof-av-clear{padding:8px 12px;border-radius:11px;border:0;background:var(--bubble-out);color:var(--accent-ink);font-size:12.5px;font-weight:600;cursor:pointer}
   .br-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
   .br-hist-h{padding:12px 18px 4px;color:var(--muted);font-size:12px}
   .br-hist{display:flex;align-items:center;gap:6px;padding:0 10px 0 18px}
@@ -236,6 +229,11 @@
   .music-art{width:120px;height:120px;border-radius:28px;display:grid;place-items:center;font-size:52px;color:#8a7ea0;background:linear-gradient(135deg,#e7e0f0,#f1e4ec);box-shadow:5px 7px 18px rgba(105,77,98,.16),-3px -3px 10px rgba(255,255,255,.7)}
   .music-hint{margin-top:6px;color:var(--soft);font-size:13px;font-weight:600}
   .music-path{max-width:100%;word-break:break-all;color:var(--muted);font-size:11px;text-align:center;line-height:1.5}
+  .music-song{margin-top:2px;color:var(--ink);font-size:15px;font-weight:600;text-align:center;max-width:100%;padding:0 12px;word-break:break-all}
+  .music-ctrls{display:flex;align-items:center;justify-content:center;gap:26px;margin:6px 0 2px}
+  .mctrl{display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:var(--bg);color:var(--accent-2);font-size:22px;box-shadow:2px 2px 6px var(--lo),-2px -2px 6px var(--hi);transition:transform .08s}
+  .mctrl:active{transform:scale(.9);box-shadow:inset 2px 2px 5px var(--lo),inset -2px -2px 5px var(--hi)}
+  .mctrl-lg{width:64px;height:64px;font-size:28px;color:#fff;background:var(--accent-2)}
   .music-wrap .primary-btn{width:100%;margin-top:6px}
   .ghost-btn{width:100%;height:40px;border:0;border-radius:13px;background:transparent;color:var(--accent-2);font-size:13px;font-weight:600;cursor:pointer;transition:transform .1s}
   .ghost-btn:active{transform:scale(.97)}
@@ -265,7 +263,7 @@
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
   .fld span{color:var(--soft);font-size:12px}
   .fld input{height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.08);color:var(--ink);font-size:13px;outline:0}
-  .primary-btn{display:grid;place-items:center;width:100%;height:40px;border-radius:12px;background:#efdde5;color:#a7617d;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi)}
+  .primary-btn{display:grid;place-items:center;width:100%;height:40px;border-radius:12px;background:var(--bubble-out);color:var(--accent-ink);font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi)}
   .primary-btn:active{box-shadow:inset 2px 2px 5px var(--lo),inset -2px -2px 5px var(--hi)}
   .toggle{width:46px;height:26px;border-radius:13px;background:#ded5e2;position:relative;transition:background .16s}
   .toggle.on{background:var(--accent-2)}
@@ -307,11 +305,22 @@
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
   function initial(n){ n = String(n || "?").trim(); return n ? n.slice(0,1) : "?"; }
+  function timeAgo(ts){   // moments timestamp → 刚刚 / N分钟前 / N小时前 / 日期
+    ts = Number(ts) || 0; if(ts <= 0) return "";
+    var d = Date.now()/1000 - ts;
+    if(d < 60) return "刚刚";
+    if(d < 3600) return Math.floor(d/60)+"分钟前";
+    if(d < 86400) return Math.floor(d/3600)+"小时前";
+    if(d < 2592000) return Math.floor(d/86400)+"天前";
+    try { return new Date(ts*1000).toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"}); } catch(e){ return ""; }
+  }
   function isUnknown(n){ return (data.unknown||[]).indexOf(String(n)) >= 0; }
   function disp(n){ return isUnknown(n) ? "未知联系人" : String(n==null?"":n); }
   function avatar(n, sm){
     var cls = "av"+(sm?" sm":"");
-    var a = isUnknown(n) ? null : (data.avatars||{})[n];   // unknown contacts stay faceless
+    var isMe = (n==="我") || (data.player && n===data.player);   // player's own bubbles use the uploaded profile avatar
+    var a = isMe ? ((data.settings&&data.settings.playerAvatar)||null)
+                 : (isUnknown(n) ? null : (data.avatars||{})[n]);   // unknown contacts stay faceless
     if(a) return '<span class="'+cls+' img" style="background-image:url(\''+a+'\')"></span>';
     return '<span class="'+cls+'">'+esc(initial(disp(n)))+'</span>';
   }
@@ -354,7 +363,7 @@
   var loaded = false;      // 首个 all() 回来前，列表页显示「加载中」而不是「还没有…」
   function applyTheme(key){
     var k = String(key||"").toLowerCase();
-    if(k!=="light" && k!=="baby" && k!=="dark") k = "pink";
+    if(k!=="baby") k = "pink";   // only two themes: 粉 (default :root) + 蓝 (baby)
     document.documentElement.setAttribute("data-theme", k);
   }
   async function load(){
@@ -454,7 +463,13 @@
   var VIEWS = {};
   var current = { view:"home", arg:null };
   var navGen = 0;                                  // bumped on every navigation
-  function go(view, arg){ navGen++; current = { view:view, arg:arg }; render(); }
+  var preCallView = {view:"home", arg:null};   // where to return when a call ends
+  function go(view, arg){
+    if((view==="inCall"||view==="incomingCall") && current.view!=="inCall" && current.view!=="incomingCall"){
+      preCallView = {view: current.view, arg: current.arg};   // remember the caller page for hangup
+    }
+    navGen++; current = { view:view, arg:arg }; render();
+  }
   // Ignore re-taps while an async handler runs (kills double-fire; shows a busy state).
   function guard(fn){
     var busy = false;
@@ -658,9 +673,9 @@
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button><b>角色设置</b><span class="hbtn"></span></div>'+
       '<div class="scroll"><div class="charset">'+
         '<div class="charset-hero">'+big+'<div class="charset-name">'+esc(disp(name))+'</div></div>'+
-        '<label class="primary-btn" style="cursor:pointer">上传头像'+
-          '<input id="av-file" type="file" accept="image/*" style="display:none"></label>'+
-        (cur ? '<button class="primary-btn" id="av-clear" style="margin-top:10px;background:var(--bubble-out);color:#9a6b80">移除头像</button>' : '')+
+        '<button class="primary-btn" id="av-pick" type="button">上传头像</button>'+
+          '<input id="av-file" type="file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">'+
+        (cur ? '<button class="primary-btn" id="av-clear" style="margin-top:10px;background:var(--bubble-out);color:var(--accent-ink)">移除头像</button>' : '')+
         '<div class="set-note">头像用在短信 / 通讯录 / 群聊里,本地保存、跨存档通用。</div>'+
       '</div>'+
       '<div class="section-title" style="margin:8px 16px 6px">好感度</div>'+
@@ -673,17 +688,17 @@
         '<div class="mode-row">'+
           '<button class="mode-opt'+(manual?"":" on")+'" data-mode="auto" type="button">自主频率</button>'+
           '<button class="mode-opt'+(manual?" on":"")+'" data-mode="manual" type="button">手动调节</button></div>'+
-        '<div class="freq-row'+(manual?"":" locked")+'">'+
-          ["关闭","低频","正常","高频"].map(function(l,i){
-            return '<button class="freq-opt'+(lvl===i?" on":"")+'" data-cf="'+i+'"'+(manual?"":" disabled")+' type="button">'+l+'</button>';
-          }).join("")+'</div>'+
-          '<div class="set-sub">'+(manual
-            ? '你正手动指定 '+esc(disp(name))+' 主动联系的频率（每个存档单独保存）。'
-            : '自主模式：频率随你俩的好感度自动调节——好感越高越主动，刚认识时会很克制。')+
-        '</div></div>'+
+        (manual
+          ? '<div class="cf-slider"><input id="cf-range" type="range" min="1" max="10" step="1" value="'+Math.max(1,Math.min(10,lvl||2))+'">'+
+              '<div class="cf-val">每小时 <b id="cf-num">'+Math.max(1,Math.min(10,lvl||2))+'</b> 次</div></div>'+
+            '<div class="set-sub">手动指定 '+esc(disp(name))+' 每小时主动联系你的次数（每个存档单独保存）。</div>'
+          : '<div class="set-sub">自主模式：频率随你俩的好感度自动调节——好感越高越主动，刚认识时会很克制。</div>')+
+        '</div>'+
       '</div>';
     screen.querySelector("[data-back]").onclick = go.bind(null, "thread", name);
     var fi = screen.querySelector("#av-file");
+    var avpick = screen.querySelector("#av-pick");
+    if(avpick) avpick.onclick = function(){ try{ fi.click(); }catch(e){} };
     fi.onchange = async function(){
       var f = fi.files && fi.files[0]; if(!f) return;
       var uri; try { uri = await downscale(f, 168); } catch(e){ return; }
@@ -702,21 +717,18 @@
       var m = el.getAttribute("data-mode");
       if(m === "manual"){
         if(manual) return;
-        var yes = await askConfirm({title:"开启手动调节？",
-          text:"你与「"+disp(name)+"」还没有达到好感度要求。手动强行指定 TA 主动联系你的频率，有些角色或许会察觉——确定要开启吗？",
-          ok:"开启手动调节"});
-        if(!yes) return;
-        try { await rpc("set_char_freq",{name:name, level:lvl}); } catch(e){}
+        try { await rpc("set_char_freq",{name:name, level:Math.max(1,Math.min(10,lvl||2))}); } catch(e){}   // 直接开手动，不再弹确认框
       } else {
         if(!manual) return;
         try { await rpc("clear_char_freq",{name:name}); } catch(e){}
       }
       go("charSettings", name);
     };});
-    screen.querySelectorAll("[data-cf]").forEach(function(el){ el.onclick=function(){
-      if(!manual) return;
-      screen.querySelectorAll("[data-cf]").forEach(function(x){ x.classList.remove("on"); }); el.classList.add("on");
-      rpc("set_char_freq",{name:name, level:parseInt(el.getAttribute("data-cf"),10)}).catch(function(){}); }; });
+    var rng = screen.querySelector("#cf-range"), cfnum = screen.querySelector("#cf-num");
+    if(rng){
+      rng.oninput = function(){ if(cfnum) cfnum.textContent = rng.value; };
+      rng.onchange = function(){ lvl = parseInt(rng.value,10)||2; rpc("set_char_freq",{name:name, level:lvl}).catch(function(){}); };   // 拉杆 = 每小时联系次数
+    }
   };
 
   // ── Calls ──
@@ -818,10 +830,8 @@
       }
       render(false);   // timed out — leave the current results as they are
     }
-    render(false);   // paint immediately; stored results fill in async
-    (async function(){ var myGen = navGen;
-      try { var g0 = await rpc("browser_results"); if(g0 && g0.results && navGen===myGen && current.view==="browser"){ data.browserResults = g0.results; render(false); } } catch(e){}
-    })();
+    data.browserResults = [];   // 每次进入浏览器不保留上次的搜索结果，只留「最近搜索」
+    render(false);   // paint immediately
   };
 
   // ── Moments ──
@@ -834,7 +844,7 @@
           ' <button class="cmt-reply" data-rc="'+esc(String(p.id))+'" data-rt="'+esc(c.author)+'">回复</button></div>'; }).join("")+'</div>' : '';
       var img = p.imageDesc ? '<div class="imgdesc">🖼 '+esc(p.imageDesc)+'</div>' : '';
       return '<article class="moment"><div class="who">'+avatar(p.author)+'<div><b>'+esc(p.author)+
-        '</b><small>动态</small></div></div>'+momentText(p.text)+img+
+        '</b><small>'+(timeAgo(p.ts)||"动态")+'</small></div></div>'+momentText(p.text)+img+
         ((likes||cmts)?'<hr>':'')+likes+cmts+
         '<div class="moment-acts"><button class="mact" data-like="'+esc(String(p.id))+'">♡ 赞</button>'+
         '<button class="mact" data-cmt="'+esc(String(p.id))+'">💬 评论</button></div></article>';
@@ -896,7 +906,7 @@
   // ── Settings (editable) ──
   VIEWS.settings = async function(){
     var s = data.settings || {};
-    var themes = [["粉","pink","#f2dfe7"],["白","light","#f6e8ee"],["婴儿蓝","baby","#d4e9f6"],["黑","dark","#2c2c2e"]];
+    var themes = [["粉","pink","#f2dfe7"],["蓝","baby","#d4e9f6"]];
     var sw = themes.map(function(t){
       var sel = (s.theme||"pink").toLowerCase()===t[1] ? " sel":"";
       return '<button class="tsw'+sel+'" data-theme="'+t[1]+'" title="'+esc(t[0])+'" style="background:'+t[2]+'"></button>';
@@ -907,7 +917,8 @@
           (s.playerAvatar
             ? '<span class="prof-av img" style="background-image:url(\''+s.playerAvatar+'\')"></span>'
             : '<span class="prof-av">'+esc(initial(s.player||"我"))+'</span>')+
-          '<label class="prof-av-btn">更换头像<input id="p-av-file" type="file" accept="image/*" style="display:none"></label>'+
+          '<button class="prof-av-btn" id="p-av-pick" type="button">更换头像</button>'+
+          '<input id="p-av-file" type="file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">'+
           (s.playerAvatar ? '<button class="prof-av-clear" id="p-av-clear" type="button">移除</button>' : '')+
         '</div>'+
         '<label class="fld"><span>昵称</span><input id="s-name" maxlength="20" value="'+esc(s.player||"")+'"></label>'+
@@ -936,6 +947,8 @@
       data.player = screen.querySelector("#s-name").value; if(data.settings)data.settings.player = data.player; save.textContent = "已保存 ✓"; setTimeout(function(){ save.textContent = "保存资料"; }, 1200);
     };
     var pf = screen.querySelector("#p-av-file");
+    var ppick = screen.querySelector("#p-av-pick");
+    if(ppick && pf) ppick.onclick = function(){ try{ pf.click(); }catch(e){} };
     if(pf) pf.onchange = async function(){
       var f = pf.files && pf.files[0]; if(!f) return;
       var uri; try { uri = await downscale(f, 168); } catch(e){ return; }
@@ -1182,7 +1195,7 @@
       try { r = await rpc("call_hangup", {name:info.name, duration:Math.floor((Date.now()-start)/1000),
         incoming:(info.dir==="incoming"), video:info.type==="video", attempt:hangupAttempts}); } catch(e){}
       if(r && r.blocked){ yandereResist(r.attempt || hangupAttempts); }   // 病娇挂不断：施压、不挂断
-      else { clearInterval(iv); closePhone(); }
+      else { clearInterval(iv); go(preCallView.view, preCallView.arg); }   // 回到拨打前的页面，而不是关掉手机
     };
     function yandereResist(n){
       if(timer){ timer.textContent = "【挂断尝试 "+n+" 次】"; timer.style.color = "#ff3b30"; timer.style.fontWeight = "700"; }
@@ -1208,15 +1221,30 @@
   VIEWS.music = async function(){
     var path = "";
     try { var g = await rpc("music_status"); path = (g&&g.path)||""; } catch(e){}
+    var myGen = navGen, songTimer = null;
+    function stopSong(){ if(songTimer){ clearInterval(songTimer); songTimer=null; } }
+    async function refreshSong(){
+      var s=null; try { s = await rpc("music_song"); } catch(e){}
+      if(navGen!==myGen || current.view!=="music"){ stopSong(); return; }
+      var el = screen.querySelector("#m-song"); if(el) el.textContent = ((s&&s.song)||"").trim() || "未在播放";
+    }
+    async function media(act){ try { await rpc("music_media",{action:act}); } catch(e){} setTimeout(refreshSong, 400); }
     function render(){
       screen.innerHTML = header("音乐") + '<div class="scroll"><div class="music-wrap">'+
         '<div class="music-art">♪</div>'+
-        '<div class="music-hint">'+(path ? "已绑定本地播放器" : "还没有绑定本地播放器")+'</div>'+
+        '<div class="music-song" id="m-song">未在播放</div>'+
+        '<div class="music-ctrls">'+
+          '<button class="mctrl" data-m="prev" aria-label="上一首">⏮</button>'+
+          '<button class="mctrl mctrl-lg" data-m="playpause" aria-label="播放/暂停">⏯</button>'+
+          '<button class="mctrl" data-m="next" aria-label="下一首">⏭</button>'+
+        '</div>'+
+        '<div class="music-hint">'+(path ? "已绑定本地播放器" : "控制系统正在播放的音乐，也可绑定本地播放器一键打开")+'</div>'+
         (path ? '<div class="music-path">'+esc(path)+'</div>' : '')+
         '<button class="primary-btn" id="m-open"'+(path?"":" disabled")+'>打开音乐播放器</button>'+
         '<button class="ghost-btn" id="m-set">'+(path?"更换播放器路径":"设置播放器路径")+'</button>'+
         '</div></div>';
       wireBack();
+      screen.querySelectorAll("[data-m]").forEach(function(el){ el.onclick=function(){ media(el.getAttribute("data-m")); }; });
       var open = screen.querySelector("#m-open");
       if(open && path) open.onclick = async function(){
         open.textContent = "正在打开…";
@@ -1232,6 +1260,7 @@
       };
     }
     render();
+    refreshSong(); songTimer = setInterval(refreshSong, 5000);
   };
   VIEWS.voice = async function(){
     var memos = [], st = {active:false, elapsed:0, captured:0}, pollTimer = null, audioEl = null;

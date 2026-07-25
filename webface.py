@@ -992,6 +992,52 @@ def _rec_audio(mid) -> dict:
     return {"data": ""}
 
 
+# ── Music media control (Qt-free, mirrors the legacy music_app) ──────
+
+def _music_media_key(vk: int) -> bool:
+    """Send a Windows media key (play/pause / prev / next) to the system media session."""
+    try:
+        import ctypes
+        ctypes.windll.user32.keybd_event(vk, 0, 0x0001, 0)
+        ctypes.windll.user32.keybd_event(vk, 0, 0x0001 | 0x0002, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _music_song() -> str:
+    """Current song from the media player's window title (NetEase / QQ Music), Qt-free."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        titles: list[str] = []
+
+        def cb(h, _):
+            if not u.IsWindowVisible(h):
+                return True
+            cls = ctypes.create_unicode_buffer(64)
+            u.GetClassNameW(h, cls, 64)
+            if "orpheus" in cls.value.lower():   # NetEase Cloud Music host window
+                n = u.GetWindowTextLengthW(h)
+                if 5 < n < 200:
+                    b = ctypes.create_unicode_buffer(n + 1)
+                    u.GetWindowTextW(h, b, n + 1)
+                    if b.value.strip():
+                        titles.append(b.value)
+            return True
+        W = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        u.EnumWindows(W(cb), 0)
+        title = titles[0] if titles else ""
+        for s in (" - NetEase Cloud Music", " - 网易云音乐", " 网易云音乐",
+                  " - QQMusic", " - QQ音乐", " - Spotify"):
+            if s in title:
+                title = title.replace(s, "").strip()
+        return title
+    except Exception:
+        return ""
+
+
 # ── RPC entry point ──────────────────────────────────────────────────
 
 def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -1071,6 +1117,11 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             from plugins.shinsekai_chat_phone import phone_core
             ok, msg = phone_core.launch_music()
             return {"ok": bool(ok), "error": ("" if ok else msg)}
+        if cmd == "music_song":
+            return {"song": _music_song()}
+        if cmd == "music_media":
+            _mk = {"prev": 0xB1, "playpause": 0xB3, "next": 0xB0}.get(str(args.get("action", "")))
+            return {"ok": bool(_mk is not None and _music_media_key(_mk))}
         if cmd == "rec_start":
             return _RECORDER.start()
         if cmd == "rec_stop":

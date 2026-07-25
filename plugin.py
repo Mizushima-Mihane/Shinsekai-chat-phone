@@ -105,9 +105,9 @@ def exchange_contacts(character_name: str) -> str:
     name="send_sms",
     group="default",
     description=(
-        "发送手机短信给玩家。当用户在手机短信中发来消息时，"
-        "调用此工具发送短信回复。character_name是发信角色名（你自己扮演的角色），"
-        "message是短信正文。可以连续调用多次发送多条短信。"
+        "发送手机短信给玩家。两种时机都用它：①玩家在手机短信里发来消息时回复；"
+        "②剧情演绎中你扮演的角色想主动给玩家发短信时（旁白可描写掏手机的动作，但短信正文只走本工具、不写进 dialog）。"
+        "character_name是发信角色名（你自己扮演的角色），message是短信正文。可以连续调用多次发送多条短信。"
     ),
 )
 def send_sms(character_name: str, message: str) -> str:
@@ -116,7 +116,7 @@ def send_sms(character_name: str, message: str) -> str:
         w.route_llm_reply(character_name, message)
     else:
         from plugins.shinsekai_chat_phone import phone_core
-        phone_core.deliver_sms(character_name, message)
+        phone_core.deliver_sms_paced(character_name, message)   # 逐条 10-30s，不再一次全弹出
     return ""
 
 
@@ -138,7 +138,7 @@ def send_sms_stranger(character_name: str, message: str) -> str:
         w.route_llm_reply(character_name, message, known=False)
     else:
         from plugins.shinsekai_chat_phone import phone_core
-        phone_core.deliver_sms(character_name, message, known=False)
+        phone_core.deliver_sms_paced(character_name, message, known=False)   # 逐条 10-30s
     return ""
 
 
@@ -416,7 +416,7 @@ def bug_character_phone(character_name: str) -> str:
 
 
 def _build_freq_tab():
-    from plugins.shinsekai_chat_phone.freq_config_ui import FreqConfigWidget
+    from plugins.shinsekai_chat_phone.legacy_qt.freq_config_ui import FreqConfigWidget
     return FreqConfigWidget()
 
 
@@ -706,6 +706,47 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
             ctx.message["content"] = prefix + _json.dumps(data, ensure_ascii=False)
 
 
+def _phone_text_kind(ctx) -> str:
+    """If this assistant turn answers a background phone *text* action (SMS / group / moment /
+    browser, injected via _trigger_runtime_turn), return its kind so the reply is kept OFF the
+    public stage. Voice calls ([通话]/[视频通话]) are excluded — their dialogue belongs on stage."""
+    try:
+        msgs = getattr(ctx, "messages", None) or []
+    except Exception:
+        return ""
+    for m in reversed(msgs):
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        c = str(m.get("content", "") or "").lstrip()
+        if c.startswith("[短信]"):
+            return "sms"
+        if c.startswith("[群聊]"):
+            return "group"
+        if c.startswith("[朋友圈]"):
+            return "moment"
+        if c.startswith("[浏览器]"):
+            return "browser"
+        return ""   # newest user turn isn't a phone-text trigger → normal story turn
+    return ""
+
+
+def _phone_group_name(ctx) -> str:
+    """Group name from the most recent [群聊] trigger, to route a stray dialog line into the
+    right group when the LLM answered with plain dialogue instead of the send_group_sms tool."""
+    try:
+        import re
+        for m in reversed(getattr(ctx, "messages", None) or []):
+            if isinstance(m, dict) and m.get("role") == "user":
+                c = str(m.get("content", "") or "")
+                if c.lstrip().startswith("[群聊]"):
+                    mm = re.search(r'群[「"]([^」"]+)[」"]', c)
+                    return mm.group(1).strip() if mm else ""
+                return ""
+    except Exception:
+        pass
+    return ""
+
+
 def _on_message_added_react(ctx, char_settings: dict) -> None:
     """React-mode assistant hook (no Qt widget): capture PHONE SMS, track face-to-face
     scene for the proactive monitor, recover narrated stranger SMS, and strip
@@ -740,6 +781,7 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
     if not isinstance(items, list):
         return
 
+    phone_kind = _phone_text_kind(ctx)   # 本轮由手机文字操作(短信/群聊/朋友圈/浏览器)触发？其回复不上主舞台
     phone_items: list[tuple[str, str]] = []
     narration_parts: list[str] = []
     spoke_chars: set[str] = set()
@@ -793,6 +835,19 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
             except Exception:
                 pass
             continue
+        # 手机文字回合(短信/群聊/朋友圈/浏览器)：角色本应只调工具、不出台词。万一 LLM 直接写了普通
+        # 对话，就转存进对应手机记录、并从主舞台抹掉——私聊内容绝不漏进正文舞台。
+        if phone_kind:
+            if phone_kind == "sms":
+                phone_items.append((name, speech))
+            elif phone_kind == "group":
+                _grp = _phone_group_name(ctx)
+                if _grp:
+                    try:
+                        phone_core.group_route_reply(_grp, name, speech)
+                    except Exception:
+                        logger.debug("react group reply capture failed", exc_info=True)
+            continue   # moment/browser 走各自工具，这里只需从舞台 strip
         # regular character dialogue -> face-to-face tracking + yandere tamper scan
         spoke_chars.add(name)
         if mon is not None:
@@ -811,7 +866,7 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
     # dialog item instead of the send_sms tool).
     for cn, sp in phone_items:
         try:
-            phone_core.deliver_sms(cn, sp)
+            phone_core.deliver_sms_paced(cn, sp)   # 逐条 10-30s
         except Exception:
             logger.debug("react PHONE deliver failed", exc_info=True)
 
@@ -829,10 +884,17 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
     # Strip COT + PHONE + CALL from the stored dialog to save tokens / keep them off stage.
     if isinstance(data, dict) and "dialog" in data:
         original_len = len(data["dialog"])
-        data["dialog"] = [
-            it for it in data["dialog"]
-            if str(it.get("character_name", "")).strip() not in ("COT", "PHONE", "CALL")
-        ]
+        if phone_kind:
+            # 手机文字回合：整轮都不该出现在主舞台，清掉全部台词，只留系统性非对话项
+            data["dialog"] = [
+                it for it in data["dialog"]
+                if str(it.get("character_name", "")).strip() in ("CHOICE", "STAT", "bgm", "CG")
+            ]
+        else:
+            data["dialog"] = [
+                it for it in data["dialog"]
+                if str(it.get("character_name", "")).strip() not in ("COT", "PHONE", "CALL")
+            ]
         if len(data["dialog"]) != original_len or phone_items:
             prefix = ""
             if isinstance(ctx.message, dict) and isinstance(ctx.message.get("content"), str):
@@ -1648,8 +1710,8 @@ class ChatPhonePlugin(PluginBase):
         # Chat UI widget
         def build_widget(ctx: ChatUIContext) -> object:
             try:
-                from plugins.shinsekai_chat_phone.phone_widget import PhoneWidget
-                from plugins.shinsekai_chat_phone.proactive_monitor import ProactiveMonitor
+                from plugins.shinsekai_chat_phone.legacy_qt.phone_widget import PhoneWidget
+                from plugins.shinsekai_chat_phone.legacy_qt.proactive_monitor import ProactiveMonitor
                 w = PhoneWidget(submit_cb=ctx.submit_user_message)
                 set_phone_widget(w)
                 _old = get_monitor()  # stop any React-mode proactive_core from the init hook

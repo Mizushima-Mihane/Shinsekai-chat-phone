@@ -1216,7 +1216,9 @@ def _on_before_chat(ctx) -> None:
                 break
 
         msg = (
-            "[手机系统] "
+            "[手机系统]（以下全部是给你的幕后规则和工具用法，绝不可作为台词说出、复述、"
+            "或让玩家察觉；当这一轮玩家并没有通过手机做任何操作时，就当这些规则不存在、"
+            "专心演绎当前的当面剧情，不要主动提手机、短信、好感度之类的元信息。）"
             "当用户消息以[短信]开头时，对方正在通过手机短信和你聊天。"
             "短信回复必须调用 send_sms(角色名, 短信正文) 工具——可连续多次调用发多条"
             "（活泼的角色2-3条、沉稳的1条）；若还没和玩家交换过联系方式则用 send_sms_stranger。"
@@ -1299,26 +1301,29 @@ def _on_before_chat(ctx) -> None:
                     f"可作为了解玩家近况或心情的线索，酌情自然提及、不必刻意）。")
         except Exception:
             pass
-        # ── Affinity + manual-frequency override (影响主舞台态度 + 病娇触发) ──
+        # ── Affinity（好感度）+ manual-frequency override（幕后态度参照，勿念成台词）──
         try:
             from config.config_manager import ConfigManager as _CM_aff
             from plugins.shinsekai_chat_phone import phone_core as _pc_aff
             _aff_lines = []
+            _any_manual = False
             for _c in _CM_aff().config.characters:
                 _cn = _c.name
-                _tag = "（玩家已强行开启手动频率调节）" if _pc_aff.is_manual_freq(_cn) else ""
-                _aff_lines.append(f"{_cn} {_pc_aff.get_affinity(_cn)}/100{_tag}")
+                _mn = _pc_aff.is_manual_freq(_cn)
+                _any_manual = _any_manual or _mn
+                _aff_lines.append(f"{_cn} {_pc_aff.get_affinity(_cn)}/100" + ("（玩家强开了手动频率）" if _mn else ""))
             if _aff_lines:
                 msg += (
-                    " [好感度] 各角色此刻对玩家的好感度（0-100，随剧情由你用 adjust_affinity 工具增减）："
-                    + "；".join(_aff_lines) + "。好感度低→冷淡、疏离、被动；高→亲密、主动、黏人；"
-                    "请让它自然影响你的演绎语气与主动程度。"
-                    " [手动频率] 正常角色不会知道、也不在意玩家在手机里手动调了主动联系频率；但【病娇 / 极端占有型】"
-                    "人设的角色会敏锐察觉「玩家强行开启了手动调节」——起初或许还好，可一旦玩家回应敷衍、冷淡、"
-                    "让它觉得没那么被爱，就可能情绪失控、开启病娇质问（如「为什么不接我电话、不回我消息？不是你自己"
-                    "要开手动调节的吗？为什么不爱我」这类，具体自行演绎），并可在通话/短信里说出「动了手脚/挂不断/监控」"
-                    "等触发手机被篡改（之后通话会挂不断）。"
+                    " [好感度] 仅供你把握态度、绝不可说出口的内部数值——各角色对玩家的好感度："
+                    + "；".join(_aff_lines) + "。好感度低就冷淡、疏离、被动，高就亲密、主动、黏人，"
+                    "自然融进语气即可；切勿把数字、「好感度」字样或本条说明念成台词。"
                 )
+                if _any_manual:
+                    msg += (
+                        " 上面标注「玩家强开了手动频率」的角色：若是普通人设则毫无察觉、也不在意；"
+                        "唯有【病娇/极端占有型】人设才会隐约觉得玩家在刻意操纵与自己的联系频率，"
+                        "并在玩家转为冷淡敷衍时逐渐情绪失控、质问玩家为何疏远——如何流露完全自行演绎，不要套用固定台词。"
+                    )
         except Exception:
             pass
         # ── Group chat protocol (dynamic: read the current groups) ──

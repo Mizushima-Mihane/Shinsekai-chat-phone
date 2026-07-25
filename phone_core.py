@@ -421,6 +421,22 @@ def group_disband(name: str) -> bool:
     return False
 
 
+def group_player_leave(name: str) -> bool:
+    """Player leaves a group (退群): hide it from the player's phone but keep the group
+    itself (its NPCs can go on in the story). Distinct from 解散, which deletes it."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    with _lock:
+        data = _load_groups()
+        g = data["groups"].get(name)
+        if isinstance(g, dict):
+            g["player_left"] = True
+            _write_json(_groups_path(), data)
+            return True
+    return False
+
+
 def mark_group_read(name: str) -> bool:
     """Clear a group's unread counter (on open)."""
     name = (name or "").strip()

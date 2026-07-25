@@ -218,6 +218,8 @@
   .ge-x:active{transform:scale(.88)}
   .ge-dissolve{width:100%;height:44px;border:0;border-radius:13px;background:#f3dbe1;color:#b8496a;font-size:14px;font-weight:700;cursor:pointer;transition:transform .1s}
   .ge-dissolve:active{transform:scale(.97)}
+  .ge-leave{width:100%;height:44px;border:0;border-radius:13px;background:#e7e0ea;color:#8a7d92;font-size:14px;font-weight:700;cursor:pointer;transition:transform .1s;margin-bottom:10px}
+  .ge-leave:active{transform:scale(.97)}
   .set-card.pad{padding:14px}
   .section-title{margin:14px 16px 6px;color:var(--soft);font-size:11px;font-weight:700}
   .fld{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
@@ -912,13 +914,15 @@
         '<div class="page-sub">成员（'+members.length+'）</div><div class="list">'+memRows+'</div>'+
         '<div class="page-sub">添加成员</div>'+(candidates.length ? '<div class="list">'+addRows+'</div>' : addRows)+
         (anyPick ? '<div style="padding:12px 14px 0"><button class="primary-btn" data-addsel>添加所选</button></div>' : '')+
-        '<div style="padding:18px 14px"><button class="ge-dissolve" data-dissolve>解散群聊</button></div>'+
+        '<div style="padding:18px 14px"><button class="ge-leave" data-leave>退出群聊</button>'+
+        '<button class="ge-dissolve" data-dissolve>解散群聊</button></div>'+
         '<div style="height:8px"></div></div>';
       var nameEl = screen.querySelector("#ge-name"); if(nameEl) nameEl.oninput = function(){ draft = nameEl.value; };
       screen.querySelector("[data-back]").onclick = guard(async function(){ await commitRename(); go("group", name); });
       screen.querySelectorAll("[data-rm]").forEach(function(el){ el.onclick = guard(function(){ return doRemove(el.getAttribute("data-rm")); }); });
       screen.querySelectorAll("[data-pick]").forEach(function(el){ el.onclick = function(){ var n=el.getAttribute("data-pick"); picks[n]=!picks[n]; render(); }; });
       var addsel = screen.querySelector("[data-addsel]"); if(addsel) addsel.onclick = guard(doAddSelected);
+      screen.querySelector("[data-leave]").onclick = guard(doLeave);
       screen.querySelector("[data-dissolve]").onclick = guard(doDissolve);
     }
     async function doRemove(m){
@@ -935,6 +939,13 @@
       if(nn && nn !== name){
         try { var r = await rpc("group_rename",{name:name, newName:nn}); if(r && r.name){ g.name = r.name; name = r.name; draft = r.name; } } catch(e){}
       }
+    }
+    async function doLeave(){
+      var yes = await askConfirm({title:"退出群聊", text:"退出后这个群不再显示在你的手机里（群和里面的角色仍会继续）。确定退出吗？", ok:"退出"});
+      if(!yes) return;
+      try { await rpc("group_leave",{name:name}); } catch(e){}
+      data.groups = (data.groups||[]).filter(function(x){ return x.name!==name; });
+      go("groups", null);
     }
     async function doDissolve(){
       var yes = await askConfirm({title:"解散群聊", text:"解散后「"+name+"」以及群里的聊天记录都会消失，无法恢复。确定解散吗？", ok:"解散"});

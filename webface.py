@@ -530,6 +530,16 @@ def _call_log() -> list[dict[str, Any]]:
     return out
 
 
+def _group_react(text: str) -> None:
+    """Fire-and-forget: let a group's NPCs react (via a runtime turn) to a player
+    membership change (add / kick / leave)."""
+    try:
+        import threading
+        threading.Thread(target=_trigger_runtime_turn, args=(text,), daemon=True, name="phone-group-event").start()
+    except Exception:
+        pass
+
+
 def _groups() -> list[dict[str, Any]]:
     """Group chats: name, members, messages (player/char/system), unread, preview."""
     d = _richest("groups.json")
@@ -539,6 +549,8 @@ def _groups() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for name, g in (groups.items() if isinstance(groups, dict) else []):
         if not isinstance(g, dict):
+            continue
+        if g.get("player_left"):   # 玩家已退群：不在玩家手机里显示（群本身给 NPC 保留）
             continue
         raw_msgs = g.get("messages") or []
         msgs: list[dict[str, Any]] = []
@@ -1088,10 +1100,20 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"ok": bool(phone_core.mark_group_read(str(args.get("name", ""))))}
         if cmd == "group_add_member":
             from plugins.shinsekai_chat_phone import phone_core
-            return {"ok": bool(phone_core.group_join(str(args.get("name", "")), str(args.get("member", "")), _player_name()))}
+            _gn, _gm = str(args.get("name", "")), str(args.get("member", ""))
+            _ok = phone_core.group_join(_gn, _gm, _player_name())
+            if _ok:
+                _group_react(f"[群聊] 在群「{_gn}」里，玩家把「{_gm}」拉进了群。请让群里相关角色用 "
+                             f"send_group_sms(群名,角色,内容) 自然反应（欢迎/打招呼/起哄/无视皆可，不相关的可不出现）；不要输出普通对话。")
+            return {"ok": bool(_ok)}
         if cmd == "group_remove_member":
             from plugins.shinsekai_chat_phone import phone_core
-            return {"ok": bool(phone_core.group_kick(str(args.get("name", "")), str(args.get("member", "")), _player_name()))}
+            _gn, _gm = str(args.get("name", "")), str(args.get("member", ""))
+            _ok = phone_core.group_kick(_gn, _gm, _player_name())
+            if _ok:
+                _group_react(f"[群聊] 在群「{_gn}」里，玩家把「{_gm}」移出了群。请让群里相关角色用 "
+                             f"send_group_sms(群名,角色,内容) 自然反应（惊讶/追问/看戏/沉默皆可）；不要输出普通对话。")
+            return {"ok": bool(_ok)}
         if cmd == "group_rename":
             from plugins.shinsekai_chat_phone import phone_core
             _nn = phone_core.group_rename(str(args.get("name", "")), str(args.get("newName", "")), _player_name())
@@ -1099,6 +1121,14 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "group_disband":
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.group_disband(str(args.get("name", ""))))}
+        if cmd == "group_leave":
+            from plugins.shinsekai_chat_phone import phone_core
+            _gn = str(args.get("name", ""))
+            _ok = phone_core.group_player_leave(_gn)
+            if _ok:
+                _group_react(f"[群聊] 玩家退出了群「{_gn}」。请让群里角色简短反应（议论/挽留/无所谓皆可，用 "
+                             f"send_group_sms(群名,角色,内容)）；不要输出普通对话。")
+            return {"ok": bool(_ok)}
         if cmd == "mark_read":
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.mark_thread_read(str(args.get("name", ""))))}

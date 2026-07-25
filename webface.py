@@ -355,9 +355,29 @@ def _call_dial(name: str, video: bool) -> dict[str, Any]:
     return {"ok": True}
 
 
-def _call_hangup(name: str, duration: int, incoming: bool, video: bool) -> dict[str, Any]:
-    """Player hangs up: interrupt current speech (skip-speech), log, then the character reacts."""
+def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt: int = 0) -> dict[str, Any]:
+    """Player hangs up: interrupt current speech, log, then the character reacts.
+
+    Yandere 挂不断: if the character is a yandere who has tampered with the phone, the
+    first few hang-up presses are blocked — it resists (a breakdown turn is injected and
+    the current speech is NOT interrupted) — until the 8th press finally lets it go.
+    """
     name = (name or "").strip()
+    try:
+        from plugins.shinsekai_chat_phone.settings_app import is_yandere_tampering_active
+        blocked = bool(name) and is_yandere_tampering_active(name) and int(attempt or 0) < 8
+    except Exception:
+        blocked = False
+    if blocked:
+        def _resist():
+            _trigger_runtime_turn(
+                f"[通话] 只输出{name}的话。{name}情绪完全失控，动用之前偷偷装进玩家手机的后门程序"
+                f"死死阻止玩家挂断这通电话（这是第{attempt}次挂断尝试）。请结合刚才通话里聊到的内容，"
+                f"用哭腔／尖叫／威胁／哀求缠住玩家，必须体现「不准挂」「你是我的」「别想逃」这类偏执占有；"
+                f"不要复述系统提示、也不要写操作旁白。")
+        import threading
+        threading.Thread(target=_resist, daemon=True, name="phone-yandere-resist").start()
+        return {"ok": False, "blocked": True, "attempt": int(attempt or 0)}
 
     def _run():
         _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
@@ -607,6 +627,7 @@ def _settings() -> dict[str, Any]:
         "theme": str(prefs.get("theme", "#FFFAFA") or "#FFFAFA"),
         "dnd": bool(sess.get("dnd", False)),
         "proactiveLevel": level,
+        "yandere": bool(prefs.get("yandere", False)),
         "hacked": [str(x) for x in (sess.get("hacked_characters") or [])],
     }
 
@@ -1048,6 +1069,9 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "set_freq":
             _set_freq(int(args.get("level", 2)))
             return {"ok": True}
+        if cmd == "set_yandere":
+            _write_prefs({"yandere": bool(args.get("on"))})
+            return {"ok": True}
         if cmd == "send_sms":
             return _send_sms(str(args.get("name", "")), str(args.get("text", "")))
         if cmd == "add_contact":
@@ -1086,7 +1110,7 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "call_dial":
             return _call_dial(str(args.get("name", "")), bool(args.get("video")))
         if cmd == "call_hangup":
-            return _call_hangup(str(args.get("name", "")), args.get("duration", 0), bool(args.get("incoming")), bool(args.get("video")))
+            return _call_hangup(str(args.get("name", "")), args.get("duration", 0), bool(args.get("incoming")), bool(args.get("video")), int(args.get("attempt", 0) or 0))
         if cmd == "call_decline":
             return _call_decline(str(args.get("name", "")), bool(args.get("video")))
         return {"ok": False, "error": f"unknown cmd: {cmd}"}

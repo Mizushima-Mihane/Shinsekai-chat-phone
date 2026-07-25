@@ -120,7 +120,11 @@
   .qcall{cursor:pointer;transition:transform .08s}
   .qcall:active{transform:scale(.9)}
   /* ── Call screen ── */
-  .callscreen{display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,#efeaf2,#e4dde8)}
+  .callscreen{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,#efeaf2,#e4dde8)}
+  .yan-float{position:absolute;color:rgba(255,59,48,.9);font-weight:900;pointer-events:none;z-index:30;text-shadow:0 1px 4px rgba(0,0,0,.45);animation:yandrift 1.5s ease-in-out infinite alternate}
+  @keyframes yandrift{from{transform:translate(0,0) rotate(-4deg)}to{transform:translate(8px,-12px) rotate(4deg)}}
+  .yan-center{left:50%!important;top:44%!important;font-size:30px!important;background:rgba(0,0,0,.72);border-radius:16px;padding:12px 18px;color:#ff3b30;animation:yanpulse .5s ease-in-out infinite alternate}
+  @keyframes yanpulse{from{transform:translate(-50%,-50%) scale(1)}to{transform:translate(-50%,-50%) scale(1.09)}}
   .call-top{display:flex;flex-direction:column;align-items:center}
   .call-av .av{width:112px;height:112px;border-radius:40px;font-size:42px}
   .call-name{margin-top:22px;font-size:24px;color:#5c5366;font-weight:700}
@@ -748,6 +752,9 @@
         '<button class="primary-btn" id="s-save">保存资料</button></div>'+
       '<div class="section-title">勿扰</div><div class="set-card"><div class="set-row"><span>勿扰模式</span>'+
         '<button class="toggle'+(s.dnd?" on":"")+'" id="s-dnd" role="switch" aria-checked="'+(s.dnd?"true":"false")+'"><i></i></button></div></div>'+
+      '<div class="section-title">病娇模式</div><div class="set-card"><div class="set-row"><span>病娇彩蛋 ❤</span>'+
+        '<button class="toggle'+(s.yandere?" on":"")+'" id="s-yan" role="switch" aria-checked="'+(s.yandere?"true":"false")+'"><i></i></button></div>'+
+        '<div class="set-sub" style="padding:0 15px 12px">开启后，设定含病娇/占有欲的角色会解锁施压、篡改手机、通话「挂不断」等行为。</div></div>'+
       '<div class="section-title">主动联系</div><div class="set-card pad"><div class="freq-row">'+
         ["关闭","低频","正常","高频"].map(function(lbl,idx){
           return '<button class="freq-opt'+(((s.proactiveLevel==null?2:s.proactiveLevel))===idx?" on":"")+'" data-freq="'+idx+'" type="button">'+lbl+'</button>';
@@ -764,6 +771,8 @@
     };
     var dnd = screen.querySelector("#s-dnd");
     dnd.onclick = function(){ var on=!dnd.classList.contains("on"); dnd.classList.toggle("on",on); dnd.setAttribute("aria-checked",on?"true":"false"); rpc("set_dnd",{on:on}); };
+    var yan = screen.querySelector("#s-yan");
+    if(yan) yan.onclick = function(){ var on=!yan.classList.contains("on"); yan.classList.toggle("on",on); yan.setAttribute("aria-checked",on?"true":"false"); rpc("set_yandere",{on:on}); };
     screen.querySelectorAll("[data-theme]").forEach(function(el){ el.onclick=function(){
       screen.querySelectorAll("[data-theme]").forEach(function(x){ x.classList.remove("sel"); }); el.classList.add("sel");
       rpc("set_theme",{theme:el.getAttribute("data-theme")}); };
@@ -970,12 +979,34 @@
       var s = Math.floor((Date.now()-start)/1000);
       timer.textContent = "通话中 " + String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
     }, 1000);
-    screen.querySelector("[data-hangup]").onclick = function(){
-      clearInterval(iv);
-      rpc("call_hangup", {name:info.name, duration:Math.floor((Date.now()-start)/1000),
-        incoming:(info.dir==="incoming"), video:info.type==="video"}).catch(function(){});
-      closePhone();
+    var hangupAttempts = 0;
+    screen.querySelector("[data-hangup]").onclick = async function(){
+      hangupAttempts++;
+      var r = null;
+      try { r = await rpc("call_hangup", {name:info.name, duration:Math.floor((Date.now()-start)/1000),
+        incoming:(info.dir==="incoming"), video:info.type==="video", attempt:hangupAttempts}); } catch(e){}
+      if(r && r.blocked){ yandereResist(r.attempt || hangupAttempts); }   // 病娇挂不断：施压、不挂断
+      else { clearInterval(iv); closePhone(); }
     };
+    function yandereResist(n){
+      if(timer){ timer.textContent = "【挂断尝试 "+n+" 次】"; timer.style.color = "#ff3b30"; timer.style.fontWeight = "700"; }
+      var cs = screen.querySelector(".callscreen") || screen;
+      cs.querySelectorAll(".yan-float").forEach(function(el){ el.remove(); });
+      if(n===7){
+        var c = document.createElement("div"); c.className = "yan-float yan-center"; c.textContent = "！！永远陪着我！！"; cs.appendChild(c);
+      } else if(n>=3){
+        var texts = ["不准挂!","你敢挂?","永远陪我","别想逃!","杀了你...","不要走...","你是我的!","我不会放手!"];
+        var cnt = n - 1, size = 18 + (n-3)*8;
+        for(var i=0;i<cnt;i++){
+          var f = document.createElement("div"); f.className = "yan-float";
+          f.textContent = texts[i % texts.length]; f.style.fontSize = size + "px";
+          f.style.left = (8 + Math.floor(Math.random()*280)) + "px";
+          f.style.top = (60 + Math.floor(Math.random()*360)) + "px";
+          f.style.animationDelay = (Math.random()*0.6).toFixed(2) + "s";
+          cs.appendChild(f);
+        }
+      }
+    }
   };
 
   VIEWS.music = async function(){

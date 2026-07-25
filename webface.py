@@ -367,9 +367,7 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool) -> dict[
             phone_core.log_call(name, max(int(duration or 0), 1), ctype)
         except Exception:
             logger.debug("call log failed", exc_info=True)
-        if name:
-            _trigger_runtime_turn(
-                f"[通话结束] 用户挂断了电话。请先以旁白身份写一句用户挂断电话的描述，再输出{name}的反应。")
+        # 挂断保持静默：只打断当前语音 + 记录通话，不往主线历史写「挂断描述/角色反应」。
 
     import threading
     threading.Thread(target=_run, daemon=True, name="phone-call-hangup").start()

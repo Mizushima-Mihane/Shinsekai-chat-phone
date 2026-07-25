@@ -1220,7 +1220,7 @@ def _on_before_chat(ctx) -> None:
             "原因：写进 dialog 会显示在主舞台的公开对话里（PHONE 项同样会露出来），而且不会真正到达手机短信。具体："
             "已是联系人→调用 send_sms(角色名, 短信正文)；未交换联系方式但已拿到玩家号码→调用 send_sms_stranger(角色真名, 短信正文)。"
             "可连续多次调用发多条。反例（禁止）：character_name=\"旁白\" 或 \"PHONE\"，speech=\"未知联系人：「……」\"。"
-            "你可以用旁白描写「手机屏幕亮起、一条短信进来」的氛围，但短信正文本身只能走 send_sms / send_sms_stranger 工具。"
+            "另外不要在 dialog/旁白里描写「手机亮起、震动、有短信进来」这类氛围——玩家的手机通知只在手机 App 里体现，主舞台不要提及；短信正文只走 send_sms / send_sms_stranger 工具。"
             " 【玩家指令】当玩家消息里出现「（xx给我发短信）」「（xx给我发消息）」「（让xx发短信）」这类括号指令时，"
             "就是要 xx 主动给玩家发短信——直接用上述工具投递（已建联系人用 send_sms、未建用 send_sms_stranger），"
             "同样不要写进 dialog（旁白/PHONE 都不行）。"

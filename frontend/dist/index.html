@@ -196,6 +196,11 @@
   .aff-bar{flex:1;height:9px;border-radius:6px;background:#efe7ec;overflow:hidden}
   .aff-fill{height:100%;border-radius:6px;background:var(--accent-2);transition:width .3s}
   .aff-val{flex:0 0 auto;font-size:13px;font-weight:700;color:var(--accent-2);min-width:26px;text-align:right}
+  .prof-av-row{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .prof-av{width:56px;height:56px;flex:0 0 auto;border-radius:18px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:20px;background:linear-gradient(145deg,#c8bed2,#afa5bf);background-size:cover;background-position:center}
+  .prof-av.img{color:transparent}
+  .prof-av-btn{padding:8px 14px;border-radius:11px;background:var(--accent-2);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
+  .prof-av-clear{padding:8px 12px;border-radius:11px;border:0;background:#eadbe1;color:#9a6b80;font-size:12.5px;font-weight:600;cursor:pointer}
   .br-bar{flex:0 0 auto;display:flex;gap:8px;padding:10px 14px 4px}
   .br-bar input{flex:1;min-width:0;height:38px;border:0;border-radius:12px;padding:0 12px;background:#ebe7ee;box-shadow:inset 1px 2px 5px rgba(111,83,104,.1);color:var(--ink);font-size:13px;outline:0}
   .br-q{margin:12px 14px 4px;color:var(--soft);font-size:12px;font-weight:700}
@@ -848,6 +853,13 @@
     }).join("");
     screen.innerHTML = header("设置") + '<div class="scroll">'+
       '<div class="section-title">个人资料</div><div class="set-card pad">'+
+        '<div class="prof-av-row">'+
+          (s.playerAvatar
+            ? '<span class="prof-av img" style="background-image:url(\''+s.playerAvatar+'\')"></span>'
+            : '<span class="prof-av">'+esc(initial(s.player||"我"))+'</span>')+
+          '<label class="prof-av-btn">更换头像<input id="p-av-file" type="file" accept="image/*" style="display:none"></label>'+
+          (s.playerAvatar ? '<button class="prof-av-clear" id="p-av-clear" type="button">移除</button>' : '')+
+        '</div>'+
         '<label class="fld"><span>昵称</span><input id="s-name" maxlength="20" value="'+esc(s.player||"")+'"></label>'+
         '<label class="fld"><span>个性签名</span><input id="s-sig" maxlength="40" placeholder="写点什么…" value="'+esc(s.signature||"")+'"></label>'+
         '<button class="primary-btn" id="s-save">保存资料</button></div>'+
@@ -856,10 +868,9 @@
       '<div class="section-title">病娇模式</div><div class="set-card"><div class="set-row"><span>病娇彩蛋 ❤</span>'+
         '<button class="toggle'+(s.yandere?" on":"")+'" id="s-yan" role="switch" aria-checked="'+(s.yandere?"true":"false")+'"><i></i></button></div>'+
         '<div class="set-sub" style="padding:0 15px 12px">开启后，设定含病娇/占有欲的角色会解锁施压、篡改手机、通话「挂不断」等行为。</div></div>'+
-      '<div class="section-title">主动联系</div><div class="set-card pad"><div class="freq-row">'+
-        ["关闭","低频","正常","高频"].map(function(lbl,idx){
-          return '<button class="freq-opt'+(((s.proactiveLevel==null?2:s.proactiveLevel))===idx?" on":"")+'" data-freq="'+idx+'" type="button">'+lbl+'</button>';
-        }).join("")+'</div><div class="set-sub">角色主动给你发短信 / 更新朋友圈的频率。</div></div>'+
+      '<div class="section-title">主动联系</div><div class="set-card"><div class="set-row"><span>允许角色主动联系</span>'+
+        '<button class="toggle'+(s.proactiveEnabled!==false?" on":"")+'" id="s-pro" role="switch" aria-checked="'+(s.proactiveEnabled!==false?"true":"false")+'"><i></i></button></div>'+
+        '<div class="set-sub" style="padding:0 15px 12px">开启后，各角色按自己的好感度（在 TA 的聊天设置里）自主决定联系频率；关闭则谁都不会主动找你。好感度不受此开关影响，照常随剧情增减。</div></div>'+
       '<div class="section-title">主题色</div><div class="set-card pad"><div class="swatches">'+sw+'</div></div>'+
       ((s.hacked&&s.hacked.length)?'<div class="section-title">监控</div><div class="set-card"><div class="set-row"><span>被监控</span><b>'+s.hacked.map(esc).join("、")+'</b></div></div>':'')+
       '<div class="set-note">勿扰与主动联系频率会在角色下一次检查(约 1 分钟内)生效。</div>'+
@@ -870,6 +881,20 @@
       await rpc("set_profile",{name:screen.querySelector("#s-name").value, signature:screen.querySelector("#s-sig").value});
       data.player = screen.querySelector("#s-name").value; if(data.settings)data.settings.player = data.player; save.textContent = "已保存 ✓"; setTimeout(function(){ save.textContent = "保存资料"; }, 1200);
     };
+    var pf = screen.querySelector("#p-av-file");
+    if(pf) pf.onchange = async function(){
+      var f = pf.files && pf.files[0]; if(!f) return;
+      var uri; try { uri = await downscale(f, 168); } catch(e){ return; }
+      if(data.settings) data.settings.playerAvatar = uri;
+      try { await rpc("set_player_avatar", {data:uri}); } catch(e){}
+      go("settings", null);
+    };
+    var pac = screen.querySelector("#p-av-clear");
+    if(pac) pac.onclick = async function(){
+      if(data.settings) data.settings.playerAvatar = "";
+      try { await rpc("set_player_avatar", {data:""}); } catch(e){}
+      go("settings", null);
+    };
     var dnd = screen.querySelector("#s-dnd");
     dnd.onclick = function(){ var on=!dnd.classList.contains("on"); dnd.classList.toggle("on",on); dnd.setAttribute("aria-checked",on?"true":"false"); rpc("set_dnd",{on:on}); };
     var yan = screen.querySelector("#s-yan");
@@ -878,10 +903,8 @@
       screen.querySelectorAll("[data-theme]").forEach(function(x){ x.classList.remove("sel"); }); el.classList.add("sel");
       rpc("set_theme",{theme:el.getAttribute("data-theme")}); };
     });
-    screen.querySelectorAll("[data-freq]").forEach(function(el){ el.onclick=function(){
-      screen.querySelectorAll("[data-freq]").forEach(function(x){ x.classList.remove("on"); }); el.classList.add("on");
-      rpc("set_freq",{level:parseInt(el.getAttribute("data-freq"),10)}); };
-    });
+    var pro = screen.querySelector("#s-pro");
+    if(pro) pro.onclick = function(){ var on=!pro.classList.contains("on"); pro.classList.toggle("on",on); pro.setAttribute("aria-checked",on?"true":"false"); rpc("set_freq",{level:on?2:0}); };
   };
 
   // ── Stubs (work in progress) ──

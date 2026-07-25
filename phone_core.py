@@ -755,6 +755,56 @@ def is_stranger_contact(name: str) -> bool:
     return False
 
 
+def contact_added_at(name: str) -> float:
+    """When this contact was added (epoch seconds), for familiarity ramp; 0 if unknown."""
+    name = (name or "").strip()
+    data = _read_json(session_dir() / "contacts.json", {}) or {}
+    contacts = data.get("contacts") if isinstance(data, dict) else None
+    if isinstance(contacts, dict):
+        info = contacts.get(name)
+        if isinstance(info, dict):
+            try:
+                return float(info.get("added_at", 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+# ── Per-character proactive-contact level, stored PER SAVE (follows the session) ──
+
+def _char_freq_path() -> Path:
+    return session_dir() / "char_freq.json"
+
+
+def get_char_freq_all() -> dict:
+    data = _read_json(_char_freq_path(), {}) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def get_char_freq(name: str) -> int:
+    """This character's proactive level (0=off,1=low,2=normal,3=high); default 2."""
+    name = (name or "").strip()
+    v = get_char_freq_all().get(name)
+    try:
+        return int(v) if v is not None else 2
+    except (TypeError, ValueError):
+        return 2
+
+
+def set_char_freq(name: str, level: int) -> bool:
+    name = (name or "").strip()
+    if not name:
+        return False
+    with _lock:
+        data = get_char_freq_all()
+        try:
+            data[name] = int(level)
+        except (TypeError, ValueError):
+            data[name] = 2
+        _write_json(_char_freq_path(), data)
+    return True
+
+
 # ── Web-phone avatars (global {name: dataURI}) ─────────────────────────
 
 def _avatars_path() -> Path:

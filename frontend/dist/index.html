@@ -604,6 +604,7 @@
   // ── Character settings (per-contact avatar) ──
   VIEWS.charSettings = async function(name){
     var cur = (data.avatars||{})[name];
+    var lvl = 2; try { var _cf = await rpc("char_freq",{name:name}); if(_cf && _cf.level!=null) lvl = _cf.level; } catch(e){}
     var big = cur
       ? '<span class="av lg img" style="background-image:url(\''+cur+'\')"></span>'
       : '<span class="av lg">'+esc(initial(disp(name)))+'</span>';
@@ -614,7 +615,14 @@
           '<input id="av-file" type="file" accept="image/*" style="display:none"></label>'+
         (cur ? '<button class="primary-btn" id="av-clear" style="margin-top:10px;background:#eadbe1;color:#9a6b80">移除头像</button>' : '')+
         '<div class="set-note">头像用在短信 / 通讯录 / 群聊里,本地保存、跨存档通用。</div>'+
-      '</div></div>';
+      '</div>'+
+      '<div class="section-title" style="margin:8px 16px 6px">主动联系</div>'+
+      '<div class="set-card pad" style="margin:0 14px 16px"><div class="freq-row">'+
+        ["关闭","低频","正常","高频"].map(function(l,i){
+          return '<button class="freq-opt'+(lvl===i?" on":"")+'" data-cf="'+i+'" type="button">'+l+'</button>';
+        }).join("")+'</div>'+
+        '<div class="set-sub">'+esc(disp(name))+' 主动给你发消息 / 来电的频率（每个存档单独保存）。刚认识时会自动压低、随熟悉度慢慢升高。</div></div>'+
+      '</div>';
     screen.querySelector("[data-back]").onclick = go.bind(null, "thread", name);
     var fi = screen.querySelector("#av-file");
     fi.onchange = async function(){
@@ -631,6 +639,9 @@
       try { await rpc("set_avatar", {name:name, data:""}); } catch(e){}
       go("charSettings", name);
     };
+    screen.querySelectorAll("[data-cf]").forEach(function(el){ el.onclick=function(){
+      screen.querySelectorAll("[data-cf]").forEach(function(x){ x.classList.remove("on"); }); el.classList.add("on");
+      rpc("set_char_freq",{name:name, level:parseInt(el.getAttribute("data-cf"),10)}).catch(function(){}); }; });
   };
 
   // ── Calls ──

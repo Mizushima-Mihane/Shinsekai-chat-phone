@@ -1088,6 +1088,12 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "set_yandere":
             _write_prefs({"yandere": bool(args.get("on"))})
             return {"ok": True}
+        if cmd == "char_freq":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"level": phone_core.get_char_freq(str(args.get("name", "")))}
+        if cmd == "set_char_freq":
+            from plugins.shinsekai_chat_phone import phone_core
+            return {"ok": bool(phone_core.set_char_freq(str(args.get("name", "")), int(args.get("level", 2) or 2)))}
         if cmd == "send_sms":
             return _send_sms(str(args.get("name", "")), str(args.get("text", "")))
         if cmd == "add_contact":

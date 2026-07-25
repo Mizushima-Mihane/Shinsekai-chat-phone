@@ -792,6 +792,7 @@ def get_char_freq(name: str) -> int:
 
 
 def set_char_freq(name: str, level: int) -> bool:
+    """Turn ON manual mode for a character with an explicit level (0=off..3=high)."""
     name = (name or "").strip()
     if not name:
         return False
@@ -803,6 +804,69 @@ def set_char_freq(name: str, level: int) -> bool:
             data[name] = 2
         _write_json(_char_freq_path(), data)
     return True
+
+
+def clear_char_freq(name: str) -> bool:
+    """Back to 自主 mode: drop the manual override so frequency follows affinity again."""
+    name = (name or "").strip()
+    with _lock:
+        data = get_char_freq_all()
+        if name in data:
+            data.pop(name, None)
+            _write_json(_char_freq_path(), data)
+            return True
+    return False
+
+
+def is_manual_freq(name: str) -> bool:
+    """True if the player manually overrode this character's proactive frequency."""
+    return (name or "").strip() in get_char_freq_all()
+
+
+# ── Affinity（好感度）: LLM-driven, per save, drives 自主 frequency + main-stage tone ──
+
+_AFFINITY_DEFAULT = 20
+
+
+def _affinity_path() -> Path:
+    return session_dir() / "affinity.json"
+
+
+def get_affinity_all() -> dict:
+    data = _read_json(_affinity_path(), {}) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def get_affinity(name: str) -> int:
+    name = (name or "").strip()
+    v = get_affinity_all().get(name)
+    try:
+        return max(0, min(100, int(v))) if v is not None else _AFFINITY_DEFAULT
+    except (TypeError, ValueError):
+        return _AFFINITY_DEFAULT
+
+
+def set_affinity(name: str, value: int) -> int:
+    name = (name or "").strip()
+    if not name:
+        return 0
+    try:
+        v = max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        v = _AFFINITY_DEFAULT
+    with _lock:
+        data = get_affinity_all()
+        data[name] = v
+        _write_json(_affinity_path(), data)
+    return v
+
+
+def adjust_affinity(name: str, delta: int) -> int:
+    try:
+        d = int(delta)
+    except (TypeError, ValueError):
+        d = 0
+    return set_affinity(name, get_affinity(name) + d)
 
 
 # ── Web-phone avatars (global {name: dataURI}) ─────────────────────────

@@ -366,6 +366,26 @@ def browser_result(query: str, results: str = "") -> str:
     return f"已生成 {len(parsed)} 条搜索结果。" if ok else "搜索结果生成失败。"
 
 
+@tool(
+    name="adjust_affinity",
+    group="default",
+    description=(
+        "调整某个角色对玩家的好感度（0-100）。当剧情推进让该角色对玩家的感情发生变化时调用："
+        "被关心、心动、亲密、玩家投其所好 → 加（+1~+10）；被冷落、敷衍、伤害、忽视 → 减（-1~-15）。"
+        "character_name 是角色名，delta 是变化量（正负整数）。好感度会影响该角色主动联系玩家的频率和平时的态度，"
+        "所以只在关系确有升温/降温时调用，日常普通对话不必每轮都调。"
+    ),
+)
+def adjust_affinity(character_name: str, delta: str = "0") -> str:
+    from plugins.shinsekai_chat_phone import phone_core
+    try:
+        d = int(str(delta).strip())
+    except Exception:
+        d = 0
+    v = phone_core.adjust_affinity(character_name, d)
+    return f"{character_name} 好感度 → {v}/100。"
+
+
 # ── LLM tool: bug character's phone ────────────────────────────────────
 
 @tool(
@@ -1277,6 +1297,28 @@ def _on_before_chat(ctx) -> None:
                 msg += (
                     f" [玩家签名] 玩家手机的个性签名是「{_psig}」（联系人都能看到，"
                     f"可作为了解玩家近况或心情的线索，酌情自然提及、不必刻意）。")
+        except Exception:
+            pass
+        # ── Affinity + manual-frequency override (影响主舞台态度 + 病娇触发) ──
+        try:
+            from config.config_manager import ConfigManager as _CM_aff
+            from plugins.shinsekai_chat_phone import phone_core as _pc_aff
+            _aff_lines = []
+            for _c in _CM_aff().config.characters:
+                _cn = _c.name
+                _tag = "（玩家已强行开启手动频率调节）" if _pc_aff.is_manual_freq(_cn) else ""
+                _aff_lines.append(f"{_cn} {_pc_aff.get_affinity(_cn)}/100{_tag}")
+            if _aff_lines:
+                msg += (
+                    " [好感度] 各角色此刻对玩家的好感度（0-100，随剧情由你用 adjust_affinity 工具增减）："
+                    + "；".join(_aff_lines) + "。好感度低→冷淡、疏离、被动；高→亲密、主动、黏人；"
+                    "请让它自然影响你的演绎语气与主动程度。"
+                    " [手动频率] 正常角色不会知道、也不在意玩家在手机里手动调了主动联系频率；但【病娇 / 极端占有型】"
+                    "人设的角色会敏锐察觉「玩家强行开启了手动调节」——起初或许还好，可一旦玩家回应敷衍、冷淡、"
+                    "让它觉得没那么被爱，就可能情绪失控、开启病娇质问（如「为什么不接我电话、不回我消息？不是你自己"
+                    "要开手动调节的吗？为什么不爱我」这类，具体自行演绎），并可在通话/短信里说出「动了手脚/挂不断/监控」"
+                    "等触发手机被篡改（之后通话会挂不断）。"
+                )
         except Exception:
             pass
         # ── Group chat protocol (dynamic: read the current groups) ──

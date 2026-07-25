@@ -1097,7 +1097,7 @@ def _reset_phone_data(w) -> None:
     if dd is not None:
         for fn in ("messages.json", "groups.json", "moments.json", "call_log.json",
                    "video_call_log.json", "pending_proactive.json", "browser_history.json",
-                   "_intro_sms_done"):
+                   "char_freq.json", "affinity.json", "_intro_sms_done"):
             with contextlib.suppress(Exception):
                 p = dd / fn
                 if p.is_file():

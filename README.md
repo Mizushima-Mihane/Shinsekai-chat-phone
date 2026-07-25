@@ -4,7 +4,7 @@
 
 On Shinsekai versions that provide the generic frontend page APIs, Chat Phone
 registers a host-rendered smartphone button in `chat-top-toolbar`. The button
-opens the plugin's bundled phone page as an overlay. Explicit `CALL` dialog
+opens the author's bundled Doki phone page as an overlay. Explicit `CALL` dialog
 markers are translated inside the plugin into `frontend_ui.present_page()`, so
 incoming calls can surface automatically without adding phone-specific events
 to the host. The classic Qt phone widget remains available on older hosts.

@@ -12,29 +12,8 @@ from sdk.plugin import PluginBase
 from sdk.plugin_host_context import PluginHostContext
 from sdk.register import PluginCapabilityRegistry
 from sdk.tool_registry import tool
-from sdk.types import (
-    ChatUIContribution,
-    FrontendConfigAction,
-    FrontendConfigContribution,
-    ToolsTabContribution,
-)
+from sdk.types import ChatUIContribution, FrontendConfigAction, FrontendConfigContribution, FrontendPageContribution, ToolsTabContribution
 from sdk.plugin_host_context import PluginSettingsUIContext
-
-try:
-    from sdk.types import FrontendChatUIContribution, FrontendPageContribution
-except ImportError:  # Compatibility with hosts released before the React page API.
-    FrontendChatUIContribution = None
-    FrontendPageContribution = None
-
-from plugins.shinsekai_chat_phone.frontend_integration import (
-    PAGE_ID as FRONTEND_PAGE_ID,
-    TOP_BAR_CONTRIBUTION_ID,
-    bind_frontend_ui,
-    clear_frontend_ui,
-    extract_incoming_call,
-    present_incoming_call,
-    strip_incoming_call_markers,
-)
 
 logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
@@ -42,6 +21,10 @@ logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
 _phone_widget: object | None = None
 _monitor: object | None = None
+_frontend_ui: object | None = None
+
+_FRONTEND_PAGE_ID = "chat_phone_app"
+_INCOMING_CALL_PRESENTATION_ID = "chat-phone.incoming-call"
 
 
 def get_phone_widget() -> object | None:
@@ -63,9 +46,61 @@ def set_monitor(m: object) -> None:
 
 
 def clear_refs() -> None:
-    global _phone_widget, _monitor
+    global _phone_widget, _monitor, _frontend_ui
     _phone_widget = None
     _monitor = None
+    _frontend_ui = None
+
+
+def set_frontend_ui(controller: object | None) -> None:
+    global _frontend_ui
+    _frontend_ui = controller
+
+
+def _emit_call_event(event: dict) -> None:
+    """Present or dismiss the author's phone page through the generic host API."""
+    event_type = str(event.get("type") or "").strip()
+    controller = _frontend_ui
+    if controller is not None:
+        try:
+            if event_type == "call.incoming":
+                controller.present_page(
+                    _FRONTEND_PAGE_ID,
+                    presentation_id=_INCOMING_CALL_PRESENTATION_ID,
+                    payload={
+                        "view": "incoming-call",
+                        "caller": str(event.get("name") or "").strip(),
+                        "callType": (
+                            "video"
+                            if str(event.get("callType") or "").lower() == "video"
+                            else "voice"
+                        ),
+                    },
+                )
+                return
+            if event_type == "call.ended":
+                controller.dismiss_page(_INCOMING_CALL_PRESENTATION_ID)
+                return
+        except RuntimeError:
+            # Expected when no React Chat stream is active (legacy Qt mode).
+            pass
+        except Exception:
+            logger.exception("generic phone page event failed")
+
+    # Compatibility fallback for hosts that implemented the original phone events.
+    try:
+        import sys
+        for key in ("__main__", "main"):
+            mod = sys.modules.get(key)
+            getter = getattr(mod, "get_stream_sink", None) if mod is not None else None
+            if getter is None:
+                continue
+            sink = getter()
+            if sink is not None and hasattr(sink, "emit"):
+                sink.emit(event)
+                return
+    except Exception:
+        logger.debug("call event emit failed", exc_info=True)
 
 
 # ── LLM tool: exchange contacts ───────────────────────────────────────
@@ -89,9 +124,11 @@ def exchange_contacts(character_name: str) -> str:
     if character_name not in all_names:
         return f"没有找到名为「{character_name}」的角色。"
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    w.add_contact(character_name)
+    if w is not None:
+        w.add_contact(character_name)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.add_contact(character_name)
     return ""
 
 
@@ -101,16 +138,18 @@ def exchange_contacts(character_name: str) -> str:
     name="send_sms",
     group="default",
     description=(
-        "发送手机短信给玩家。当用户在手机短信中发来消息时，"
-        "调用此工具发送短信回复。character_name是发信角色名（你自己扮演的角色），"
-        "message是短信正文。可以连续调用多次发送多条短信。"
+        "发送手机短信给玩家。两种时机都用它：①玩家在手机短信里发来消息时回复；"
+        "②剧情演绎中你扮演的角色想主动给玩家发短信时（旁白可描写掏手机的动作，但短信正文只走本工具、不写进 dialog）。"
+        "character_name是发信角色名（你自己扮演的角色），message是短信正文。可以连续调用多次发送多条短信。"
     ),
 )
 def send_sms(character_name: str, message: str) -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    w.route_llm_reply(character_name, message)
+    if w is not None:
+        w.route_llm_reply(character_name, message)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.deliver_sms_paced(character_name, message)   # 逐条 10-30s，不再一次全弹出
     return ""
 
 
@@ -128,9 +167,11 @@ def send_sms(character_name: str, message: str) -> str:
 )
 def send_sms_stranger(character_name: str, message: str) -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    w.route_llm_reply(character_name, message, known=False)
+    if w is not None:
+        w.route_llm_reply(character_name, message, known=False)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.deliver_sms_paced(character_name, message, known=False)   # 逐条 10-30s
     return ""
 
 
@@ -147,9 +188,11 @@ def send_sms_stranger(character_name: str, message: str) -> str:
 )
 def send_group_sms(group_name: str, character_name: str, message: str) -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    w.route_group_reply(group_name, character_name, message)
+    if w is not None:
+        w.route_group_reply(group_name, character_name, message)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.group_route_reply(group_name, character_name, message)
     return ""
 
 
@@ -164,11 +207,13 @@ def send_group_sms(group_name: str, character_name: str, message: str) -> str:
     ),
 )
 def create_group(group_name: str, members: str) -> str:
-    w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
     mem = [m.strip() for m in members.replace("，", ",").replace("、", ",").split(",") if m.strip()]
-    gid = w.create_group_from_llm(group_name, mem)
+    w = get_phone_widget()
+    if w is not None:
+        gid = w.create_group_from_llm(group_name, mem)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        gid = phone_core.group_create(group_name, mem)
     return f"已创建群聊「{gid}」。" if gid else "建群失败。"
 
 
@@ -185,9 +230,11 @@ def create_group(group_name: str, members: str) -> str:
 )
 def add_group_member(group_name: str, character_name: str, operator_name: str = "") -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    ok = w.group_add_member(group_name, character_name, operator_name)
+    if w is not None:
+        ok = w.group_add_member(group_name, character_name, operator_name)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        ok = phone_core.group_join(group_name, character_name, operator_name)
     return "" if ok else f"无法把「{character_name}」加入群「{group_name}」（群不存在或已在群里）。"
 
 
@@ -201,9 +248,11 @@ def add_group_member(group_name: str, character_name: str, operator_name: str = 
 )
 def remove_group_member(group_name: str, character_name: str, operator_name: str = "") -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    ok = w.group_remove_member(group_name, character_name, operator_name)
+    if w is not None:
+        ok = w.group_remove_member(group_name, character_name, operator_name)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        ok = phone_core.group_kick(group_name, character_name, operator_name)
     return "" if ok else f"无法把「{character_name}」移出群「{group_name}」（群不存在或不在群里）。"
 
 
@@ -216,9 +265,11 @@ def remove_group_member(group_name: str, character_name: str, operator_name: str
 )
 def leave_group(group_name: str, character_name: str) -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    ok = w.group_char_leave(group_name, character_name)
+    if w is not None:
+        ok = w.group_char_leave(group_name, character_name)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        ok = phone_core.group_leave(group_name, character_name)
     return "" if ok else f"「{character_name}」无法退出群「{group_name}」（群不存在或不在群里）。"
 
 
@@ -232,9 +283,11 @@ def leave_group(group_name: str, character_name: str) -> str:
 )
 def rename_group(group_name: str, new_name: str, operator_name: str = "") -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    final = w.group_rename(group_name, new_name, operator_name)
+    if w is not None:
+        final = w.group_rename(group_name, new_name, operator_name)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        final = phone_core.group_rename(group_name, new_name, operator_name)
     return "" if final else f"无法把群「{group_name}」改名（群不存在或新名无效）。"
 
 
@@ -260,9 +313,11 @@ def _coerce_pid(x) -> int:
 )
 def post_moment(character_name: str, text: str, image_desc: str = "") -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    pid = w.post_moment_from_llm(character_name, text, image_desc)
+    if w is not None:
+        pid = w.post_moment_from_llm(character_name, text, image_desc)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        pid = phone_core.moment_add_post(character_name, text, image_desc)
     return f"已发布动态 #{pid}。" if pid else "发布失败。"
 
 
@@ -280,9 +335,11 @@ def post_moment(character_name: str, text: str, image_desc: str = "") -> str:
 )
 def comment_moment(post_id: str, character_name: str, text: str, reply_to: str = "") -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    w.route_moment_comment(_coerce_pid(post_id), character_name, text, reply_to)
+    if w is not None:
+        w.route_moment_comment(_coerce_pid(post_id), character_name, text, reply_to)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.moment_add_comment(_coerce_pid(post_id), character_name, text, reply_to=reply_to)
     return ""
 
 
@@ -296,10 +353,70 @@ def comment_moment(post_id: str, character_name: str, text: str, reply_to: str =
 )
 def like_moment(post_id: str, character_name: str) -> str:
     w = get_phone_widget()
-    if w is None:
-        return "手机插件尚未初始化。"
-    w.moment_like_from_llm(_coerce_pid(post_id), character_name)
+    if w is not None:
+        w.moment_like_from_llm(_coerce_pid(post_id), character_name)
+    else:
+        from plugins.shinsekai_chat_phone import phone_core
+        phone_core.moment_add_like(_coerce_pid(post_id), character_name)
     return ""
+
+
+@tool(
+    name="browser_result",
+    group="default",
+    description=(
+        "为玩家的一次浏览器搜索生成搜索结果页。当用户消息以[浏览器]开头时调用："
+        "你此刻是这个世界的搜索引擎，不是角色本人。query 传玩家搜索的关键词；"
+        "results 传一个 JSON 数组（4-6 条），每项包含 title（标题）、snippet（摘要）、"
+        "site（来源站点，可选）三个字段。结果要具体、有细节、够劲爆吸睛（八卦、猛料、反转、"
+        "都市传说皆可），可结合当前剧情与相关角色，让玩家有一探究竟的欲望。只调用本工具，不要输出对话或旁白。"
+    ),
+)
+def browser_result(query: str, results: str = "") -> str:
+    import json as _json
+    parsed: list = []
+    raw = results
+    if isinstance(raw, list):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = _json.loads(raw)
+        except Exception:
+            for line in raw.splitlines():
+                line = line.strip().lstrip("-•*0123456789. ").strip()
+                if not line:
+                    continue
+                sep = "::" if "::" in line else ("|" if "|" in line else "")
+                if sep:
+                    _t, _s = line.split(sep, 1)
+                    parsed.append({"title": _t.strip(), "snippet": _s.strip()})
+                else:
+                    parsed.append({"title": line, "snippet": ""})
+    if not isinstance(parsed, list):
+        parsed = []
+    from plugins.shinsekai_chat_phone import phone_core
+    ok = phone_core.save_browser_results(query, parsed)
+    return f"已生成 {len(parsed)} 条搜索结果。" if ok else "搜索结果生成失败。"
+
+
+@tool(
+    name="adjust_affinity",
+    group="default",
+    description=(
+        "调整某个角色对玩家的好感度（0-100）。当剧情推进让该角色对玩家的感情发生变化时调用："
+        "被关心、心动、亲密、玩家投其所好 → 加（+1~+10）；被冷落、敷衍、伤害、忽视 → 减（-1~-15）。"
+        "character_name 是角色名，delta 是变化量（正负整数）。好感度会影响该角色主动联系玩家的频率和平时的态度，"
+        "所以只在关系确有升温/降温时调用，日常普通对话不必每轮都调。"
+    ),
+)
+def adjust_affinity(character_name: str, delta: str = "0") -> str:
+    from plugins.shinsekai_chat_phone import phone_core
+    try:
+        d = int(str(delta).strip())
+    except Exception:
+        d = 0
+    v = phone_core.adjust_affinity(character_name, d)
+    return f"{character_name} 好感度 → {v}/100。"
 
 
 # ── LLM tool: bug character's phone ────────────────────────────────────
@@ -332,7 +449,7 @@ def bug_character_phone(character_name: str) -> str:
 
 
 def _build_freq_tab():
-    from plugins.shinsekai_chat_phone.freq_config_ui import FreqConfigWidget
+    from plugins.shinsekai_chat_phone.legacy_qt.freq_config_ui import FreqConfigWidget
     return FreqConfigWidget()
 
 
@@ -382,21 +499,89 @@ def _resolve_session_dir() -> Path:
 
 # ── Hook handlers (extracted from ChatPhonePlugin.initialize) ──────────
 
+def _apply_scene_transition(ctx, mon, char_settings, narration_parts, spoke_chars) -> None:
+    """在场角色状态维护：转场/时间跳跃→清场并以本轮说话者重建；某人离开→单独移出。
+
+    供主动监控判断谁当面在场（在场者不主动打扰）。Qt 与 React 两条 message-added 路径共用。
+    """
+    try:
+        import re as _re6
+        narr = " ".join(narration_parts)
+        last_user = ""
+        for m in reversed(getattr(ctx, "messages", None) or []):
+            if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str):
+                last_user = m["content"]
+                break
+        player_moved = bool(_re6.match(
+            r'^\s*[（(]\s*(?:去|前往|赶去|赶往|离开|回家|回到|出门|走出|回房|回公寓|回住处)', last_user))
+        _TRANSITION_KW = ("第二天", "次日", "翌日", "隔天", "几天后", "数日后", "一周后", "一个月后",
+                          "几小时后", "半小时后", "场景切换", "转场",
+                          "回到家", "回到房间", "回到公寓", "回到住处", "回到自己的")
+        if player_moved or any(k in narr for k in _TRANSITION_KW):
+            mon.clear_scene()
+            for s in spoke_chars:
+                mon.set_scene_character(s)
+        for cn in char_settings:
+            if _re6.search(
+                rf'{_re6.escape(cn)}[^。！？!?\n]{{0,6}}(?:离开|走了|离去|告辞|离席|先走|先行离|转身离|起身离|扬长而去)',
+                narr,
+            ):
+                mon.remove_scene_character(cn)
+    except Exception:
+        pass
+
+
+def _recover_stranger_sms(char_settings, narration_parts, spoke_chars, deliver) -> None:
+    """从旁白/COT 里回收「未知联系人发来短信」的正文并投递（deliver(sender, msg)）。
+
+    仅当发信人能唯一归属到一名在册角色、且该角色本轮没当面说话时才投递。Qt 与 React 共用。
+    """
+    import re as _re4
+    narr = " ".join(narration_parts)
+    mm = _re4.search(
+        r'(?:未知联系人|陌生号码|未知号码|陌生人|陌生短信)[^「『"（(]{0,10}[「『"]([^」』"]{1,200})[」』"]',
+        narr,
+    )
+    if not mm:
+        return
+    stranger_msg = mm.group(1).strip()
+    sms_cue = (r'(?:未知联系人|发来短信|发短信|发条短信|发了短信|发送短信|'
+               r'拿到[^。！？!?\n]{0,6}号码|要到[^。！？!?\n]{0,6}号码|搞到[^。！？!?\n]{0,6}号码)')
+    cands: set[str] = set()
+    for cn in char_settings:
+        cn = (cn or "").strip()
+        if not cn:
+            continue
+        al = {cn}
+        if len(cn) >= 4:
+            al.add(cn[:2]); al.add(cn[-2:])
+        elif len(cn) == 3:
+            al.add(cn[-2:])
+        alt = "|".join(_re4.escape(a) for a in al if len(a) >= 2)
+        if not alt:
+            continue
+        if (_re4.search(rf'(?:{alt})[^。！？!?\n]{{0,20}}{sms_cue}', narr)
+                or _re4.search(rf'{sms_cue}[^。！？!?\n]{{0,20}}(?:{alt})', narr)):
+            cands.add(cn)
+    sender = next(iter(cands)) if len(cands) == 1 else ""
+    if sender and sender not in spoke_chars and stranger_msg:
+        logger.info("Recovered narrated stranger SMS -> %s: %s", sender, stranger_msg[:40])
+        try:
+            deliver(sender, stranger_msg)
+        except Exception:
+            logger.debug("stranger sms deliver failed", exc_info=True)
+
+
 def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
     """Handle assistant message — capture SMS replies, detect hangups, scan yandere."""
     if ctx.role != "assistant":
         return
-    content = ctx.message.get("content", "") if isinstance(ctx.message, dict) else ""
-    if not content:
-        return
-    incoming_call = extract_incoming_call(content, char_settings)
-    if incoming_call is not None:
-        present_incoming_call(*incoming_call)
     w = get_phone_widget()
     if w is None:
-        stripped = strip_incoming_call_markers(content)
-        if stripped is not None and isinstance(ctx.message, dict):
-            ctx.message["content"] = stripped
+        _on_message_added_react(ctx, char_settings)
+        return
+    content = ctx.message.get("content", "") if isinstance(ctx.message, dict) else ""
+    if not content:
         return
     # Strip leading non-JSON text
     content = content.strip()
@@ -500,37 +685,10 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
     for i, (cn, sp) in enumerate(phone_items):
         w.route_llm_reply(cn, sp, stagger_index=i)
 
-    # ── 场景状态维护：在场角色一直保持在场，直到「转场/时间跳跃」或「有人离开」才释放。
-    # 主动监控据此绝不给当面在场的角色发短信（保守检测——宁可漏放、不误清，以免又骚扰在场角色）。
+    # 场景状态维护 + 转场/离开释放（供主动监控判断当面在场者）。Qt/React 共用同一逻辑。
     _mon_scene = get_monitor()
     if _mon_scene is not None:
-        try:
-            import re as _re6
-            _narr = " ".join(narration_parts)
-            _last_user = ""
-            for _m in reversed(getattr(ctx, "messages", None) or []):
-                if isinstance(_m, dict) and _m.get("role") == "user" and isinstance(_m.get("content"), str):
-                    _last_user = _m["content"]
-                    break
-            # 玩家显式移动（开场括号动作）或旁白明确的时间跳跃/换地点 → 视为转场
-            _player_moved = bool(_re6.match(
-                r'^\s*[（(]\s*(?:去|前往|赶去|赶往|离开|回家|回到|出门|走出|回房|回公寓|回住处)', _last_user))
-            _TRANSITION_KW = ("第二天", "次日", "翌日", "隔天", "几天后", "数日后", "一周后", "一个月后",
-                              "几小时后", "半小时后", "场景切换", "转场",
-                              "回到家", "回到房间", "回到公寓", "回到住处", "回到自己的")
-            if _player_moved or any(k in _narr for k in _TRANSITION_KW):
-                _mon_scene.clear_scene()              # 上一场景结束
-                for _s in spoke_chars:                # 新场景的当面角色 = 本轮说话的人
-                    _mon_scene.set_scene_character(_s)
-            # 有人离开：旁白里「X 离开/走了/告辞…」→ 把 X 移出在场（其余人仍在场）
-            for _cn in char_settings:
-                if _re6.search(
-                    rf'{_re6.escape(_cn)}[^。！？!?\n]{{0,6}}(?:离开|走了|离去|告辞|离席|先走|先行离|转身离|起身离|扬长而去)',
-                    _narr,
-                ):
-                    _mon_scene.remove_scene_character(_cn)
-        except Exception:
-            pass
+        _apply_scene_transition(ctx, _mon_scene, char_settings, narration_parts, spoke_chars)
 
     # ── Heuristic fallback: LLM narrated an incoming call instead of using the
     # CALL marker. Only fire when: no CALL was signaled, the narration clearly
@@ -558,41 +716,11 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
                     call_type = "video" if "视频" in narration else "voice"
                     w._incoming_call_signal.emit(caller, call_type)
 
-    # ── Heuristic fallback: LLM narrated a stranger/unknown-contact SMS in 旁白/COT
-    # instead of calling send_sms_stranger. Recover the message body + attribute the
-    # sender, then deliver so it actually lands in the SMS app. Only fires when the
-    # sender is a single, unambiguous roster character.
+    # Heuristic fallback: LLM narrated a stranger/unknown-contact SMS in 旁白/COT
+    # instead of calling send_sms_stranger — recover + deliver so it lands in the app.
     if narration_parts:
-        import re as _re4
-        _narr = " ".join(narration_parts)
-        _mm = _re4.search(
-            r'(?:未知联系人|陌生号码|未知号码|陌生人|陌生短信)[^「『"（(]{0,10}[「『"]([^」』"]{1,200})[」』"]',
-            _narr,
-        )
-        if _mm:
-            _stranger_msg = _mm.group(1).strip()
-            _sms_cue = (r'(?:未知联系人|发来短信|发短信|发条短信|发了短信|发送短信|'
-                        r'拿到[^。！？!?\n]{0,6}号码|要到[^。！？!?\n]{0,6}号码|搞到[^。！？!?\n]{0,6}号码)')
-            _cands: set[str] = set()
-            for _cn in char_settings:
-                _cn = (_cn or "").strip()
-                if not _cn:
-                    continue
-                _al = {_cn}
-                if len(_cn) >= 4:
-                    _al.add(_cn[:2]); _al.add(_cn[-2:])
-                elif len(_cn) == 3:
-                    _al.add(_cn[-2:])
-                _alt = "|".join(_re4.escape(a) for a in _al if len(a) >= 2)
-                if not _alt:
-                    continue
-                if (_re4.search(rf'(?:{_alt})[^。！？!?\n]{{0,20}}{_sms_cue}', _narr)
-                        or _re4.search(rf'{_sms_cue}[^。！？!?\n]{{0,20}}(?:{_alt})', _narr)):
-                    _cands.add(_cn)
-            _sender = next(iter(_cands)) if len(_cands) == 1 else ""
-            if _sender and _sender not in spoke_chars and _stranger_msg:
-                logger.info("Recovered narrated stranger SMS -> %s: %s", _sender, _stranger_msg[:40])
-                w.route_llm_reply(_sender, _stranger_msg, known=False)
+        _recover_stranger_sms(char_settings, narration_parts, spoke_chars,
+                              lambda s, m: w.route_llm_reply(s, m, known=False))
 
     # Strip COT + PHONE + CALL from stored dialog to save tokens
     if isinstance(data, dict) and "dialog" in data:
@@ -601,6 +729,205 @@ def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
             it for it in data["dialog"]
             if str(it.get("character_name", "")).strip() not in ("COT", "PHONE", "CALL")
         ]
+        if len(data["dialog"]) != original_len or phone_items:
+            prefix = ""
+            if isinstance(ctx.message, dict) and isinstance(ctx.message.get("content"), str):
+                raw = ctx.message["content"]
+                idx = raw.find("{")
+                if idx > 0:
+                    prefix = raw[:idx]
+            ctx.message["content"] = prefix + _json.dumps(data, ensure_ascii=False)
+
+
+def _phone_text_kind(ctx) -> str:
+    """If this assistant turn answers a background phone *text* action (SMS / group / moment /
+    browser, injected via _trigger_runtime_turn), return its kind so the reply is kept OFF the
+    public stage. Voice calls ([通话]/[视频通话]) are excluded — their dialogue belongs on stage."""
+    try:
+        msgs = getattr(ctx, "messages", None) or []
+    except Exception:
+        return ""
+    for m in reversed(msgs):
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        c = str(m.get("content", "") or "").lstrip()
+        if c.startswith("[短信]"):
+            return "sms"
+        if c.startswith("[群聊]"):
+            return "group"
+        if c.startswith("[朋友圈]"):
+            return "moment"
+        if c.startswith("[浏览器]"):
+            return "browser"
+        return ""   # newest user turn isn't a phone-text trigger → normal story turn
+    return ""
+
+
+def _phone_group_name(ctx) -> str:
+    """Group name from the most recent [群聊] trigger, to route a stray dialog line into the
+    right group when the LLM answered with plain dialogue instead of the send_group_sms tool."""
+    try:
+        import re
+        for m in reversed(getattr(ctx, "messages", None) or []):
+            if isinstance(m, dict) and m.get("role") == "user":
+                c = str(m.get("content", "") or "")
+                if c.lstrip().startswith("[群聊]"):
+                    mm = re.search(r'群[「"]([^」"]+)[」"]', c)
+                    return mm.group(1).strip() if mm else ""
+                return ""
+    except Exception:
+        pass
+    return ""
+
+
+def _on_message_added_react(ctx, char_settings: dict) -> None:
+    """React-mode assistant hook (no Qt widget): capture PHONE SMS, track face-to-face
+    scene for the proactive monitor, recover narrated stranger SMS, and strip
+    COT/PHONE/CALL from the stored dialog. Call/video is Qt-only, so it's skipped here.
+    """
+    import re
+    from plugins.shinsekai_chat_phone import phone_core
+    content = ctx.message.get("content", "") if isinstance(ctx.message, dict) else ""
+    if not isinstance(content, str) or not content.strip():
+        return
+    content = content.strip()
+    if not content.startswith("{"):
+        m = re.search(r'[{\[]', content)
+        if m:
+            content = content[m.start():]
+    try:
+        data = _json.loads(content)
+    except Exception:
+        fixed = re.sub(r'("speech"\s*:\s*")(.*?)("\s*[,}])',
+                       lambda mm: mm.group(1) + mm.group(2).replace('"', '\\"') + mm.group(3),
+                       content, flags=re.DOTALL)
+        try:
+            data = _json.loads(fixed)
+        except Exception:
+            return
+    if isinstance(data, dict):
+        items = data.get("dialog", [])
+    elif isinstance(data, list):
+        items = data
+    else:
+        return
+    if not isinstance(items, list):
+        return
+
+    phone_kind = _phone_text_kind(ctx)   # 本轮由手机文字操作(短信/群聊/朋友圈/浏览器)触发？其回复不上主舞台
+    phone_items: list[tuple[str, str]] = []
+    narration_parts: list[str] = []
+    spoke_chars: set[str] = set()
+    mon = get_monitor()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("character_name", "") or "").strip()
+        speech = str(item.get("speech", "") or "").strip()
+        if not name or not speech:
+            continue
+        if name == "PHONE":
+            m = re.match(r"([^：:]+)[：:]\s*(.+)", speech) or re.match(r"\[([^\]]+)\]\s*(.+)", speech)
+            if m:
+                cn = m.group(1).strip()
+                if not (cn.startswith("【") or "监控情报" in cn):  # never deliver 监控情报 as SMS
+                    phone_items.append((cn, m.group(2).strip()))
+            continue
+        if name == "CALL":
+            # character-initiated call: signal the frontend to ring / pop the phone.
+            call_char = speech.split(":")[0].split("：")[0].strip()
+            call_type = "video" if ("视频" in speech or "video" in speech.lower()) else "voice"
+            if call_char and call_char in char_settings:
+                _dnd = False
+                try:
+                    from plugins.shinsekai_chat_phone.settings_app import is_dnd as _is_dnd
+                    _dnd = _is_dnd()
+                except Exception:
+                    _dnd = False
+                if _dnd:  # 勿扰：不弹来电，只记一条未接
+                    try:
+                        phone_core.log_call(call_char, 0, "missed_video" if call_type == "video" else "missed_dnd")
+                    except Exception:
+                        pass
+                else:
+                    _emit_call_event({"type": "call.incoming", "name": call_char, "callType": call_type,
+                                      "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"})
+            continue
+        if name in ("NARR", "CHOICE", "STAT", "bgm", "CG", "旁白"):
+            if name in ("NARR", "旁白"):
+                narration_parts.append(speech)
+            continue
+        if name == "COT":
+            narration_parts.append(speech)
+            try:
+                from plugins.shinsekai_chat_phone.settings_app import is_character_yandere, record_yandere_tampering
+                if any(k in speech for k in _TAMPER_KW):
+                    for cname in char_settings:
+                        if cname in speech and is_character_yandere(cname):
+                            record_yandere_tampering(cname)
+            except Exception:
+                pass
+            continue
+        # 手机文字回合(短信/群聊/朋友圈/浏览器)：角色本应只调工具、不出台词。万一 LLM 直接写了普通
+        # 对话，就转存进对应手机记录、并从主舞台抹掉——私聊内容绝不漏进正文舞台。
+        if phone_kind:
+            if phone_kind == "sms":
+                phone_items.append((name, speech))
+            elif phone_kind == "group":
+                _grp = _phone_group_name(ctx)
+                if _grp:
+                    try:
+                        phone_core.group_route_reply(_grp, name, speech)
+                    except Exception:
+                        logger.debug("react group reply capture failed", exc_info=True)
+            continue   # moment/browser 走各自工具，这里只需从舞台 strip
+        # regular character dialogue -> face-to-face tracking + yandere tamper scan
+        spoke_chars.add(name)
+        if mon is not None:
+            try:
+                mon.set_scene_character(name)
+            except Exception:
+                pass
+        try:
+            from plugins.shinsekai_chat_phone.settings_app import is_character_yandere, record_yandere_tampering
+            if is_character_yandere(name) and any(k in speech for k in _TAMPER_KW[:-4]):
+                record_yandere_tampering(name)
+        except Exception:
+            pass
+
+    # Deliver PHONE items straight to the phone (fallback if the LLM used a PHONE
+    # dialog item instead of the send_sms tool).
+    for cn, sp in phone_items:
+        try:
+            phone_core.deliver_sms_paced(cn, sp)   # 逐条 10-30s
+        except Exception:
+            logger.debug("react PHONE deliver failed", exc_info=True)
+
+    if mon is not None:
+        _apply_scene_transition(ctx, mon, char_settings, narration_parts, spoke_chars)
+    if narration_parts:
+        _recover_stranger_sms(char_settings, narration_parts, spoke_chars,
+                              lambda s, m: phone_core.deliver_sms(s, m, known=False))
+        # character hung up (narrated) -> end the call in the frontend UI
+        _narr_hangup = " ".join(narration_parts)
+        if any(k in _narr_hangup for k in ("挂断了电话", "挂掉了电话", "挂断了通话", "结束了通话",
+                                           "啪地挂断", "主动挂断", "先一步挂", "生气地挂")):
+            _emit_call_event({"type": "call.ended"})
+
+    # Strip COT + PHONE + CALL from the stored dialog to save tokens / keep them off stage.
+    if isinstance(data, dict) and "dialog" in data:
+        original_len = len(data["dialog"])
+        if phone_kind:
+            # 手机文字回合：整轮都不该出现在主舞台，清掉全部台词，只留系统性非对话项
+            data["dialog"] = [
+                it for it in data["dialog"]
+                if str(it.get("character_name", "")).strip() in ("CHOICE", "STAT", "bgm", "CG")
+            ]
+        else:
+            data["dialog"] = [
+                it for it in data["dialog"]
+                if str(it.get("character_name", "")).strip() not in ("COT", "PHONE", "CALL")
+            ]
         if len(data["dialog"]) != original_len or phone_items:
             prefix = ""
             if isinstance(ctx.message, dict) and isinstance(ctx.message.get("content"), str):
@@ -622,7 +949,7 @@ _DROP_VERB = r"(?:删|拉黑|屏蔽|移除)"
 def _opening_char_aliases(roster: list[str]) -> dict[str, str]:
     """构造「别名 -> 角色名」映射；跨角色歧义的别名剔除，避免误配。
 
-    别名候选 = 全名 + 常见简称（四字名取前两字/后两字，如 房石阳明→房石、坂田银时→银时）。
+    别名候选 = 全名 + 常见简称（四字名取前两字/后两字，如「甲乙丙丁」→「甲乙」「丙丁」）。
     """
     counts: dict[str, list[str]] = {}
     for name in roster:
@@ -701,8 +1028,8 @@ def _seed_contacts_from_opening(ctx) -> None:
         # 按「小句」判定，比逐名锚定更稳：
         # 切句时【保留顿号】，让「A、B 的联系方式」这类名字列表留在同一小句；
         # 每个提到「联系方式」的小句先判正/负极性，再把该句里出现的角色按极性归类。
-        # 例：「我有乌尔比安、银时的联系方式」→ 正（乌尔比安+银时）；
-        #     「房石的联系方式还没有」→ 负（还没→房石不建）。
+        # 例：「我有 甲、乙 的联系方式」→ 正（甲+乙）；
+        #     「丙 的联系方式还没有」→ 负（还没→丙不建）。
         _CONTACT_KWS = ("联系方式", "联络方式", "号码", "微信", "电话号")
         _NEG_MARKS = ("没", "未", "尚未", "删", "拉黑", "屏蔽", "移除", "还没", "不知道", "丢了", "找不到")
         seed_names: set[str] = set()
@@ -865,7 +1192,7 @@ def _reset_phone_data(w) -> None:
     if dd is not None:
         for fn in ("messages.json", "groups.json", "moments.json", "call_log.json",
                    "video_call_log.json", "pending_proactive.json", "browser_history.json",
-                   "_intro_sms_done"):
+                   "browser_results.json", "char_freq.json", "affinity.json", "_intro_sms_done"):
             with contextlib.suppress(Exception):
                 p = dd / fn
                 if p.is_file():
@@ -873,17 +1200,71 @@ def _reset_phone_data(w) -> None:
     logger.info("Phone data reset for new game")
 
 
-def _maybe_reset_phone_on_new_game(ctx) -> None:
-    """新开存档时清空手机数据。
+def _context_is_compacted(msgs) -> bool:
+    """上下文里是否出现「历史压缩摘要」。
 
-    判定：本轮对话里「有开场 user 消息、但还没有任何 assistant 回合」→ 全新一局的第一轮。
-    继续存档必然已有 assistant 消息，因此绝不会误清正在进行的存档。仅在确有旧数据时动作。
+    摘要以 ``role=user`` 注入（见 llm/compact_manager.py），压缩恰好发生在「你刚发消息、
+    AI 还没回」时，会让上下文变成「有 user、无 assistant」——正是新局判定的样子，从而误报。
+    一旦检测到摘要标记，就说明这是被压缩过的进行中对话，绝不重置。
+    """
+    markers = ("历史对话总结", "历史摘要", "较早历史已省略")
+    try:
+        from llm.compact_manager import CompactManager
+        markers = tuple(getattr(CompactManager, "SUMMARY_MARKERS", markers)) or markers
+    except Exception:
+        pass
+    for m in (msgs or []):
+        if isinstance(m, dict):
+            c = m.get("content")
+            if isinstance(c, str) and any(mk in c for mk in markers):
+                return True
+    return False
+
+
+def _phone_data_dir(w) -> object | None:
+    """当前存档的手机数据目录（Qt: 组件；React: phone_core 会话）。"""
+    dd = getattr(w, "_data_dir", None) if w is not None else None
+    if dd is not None:
+        return dd
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        return phone_core.session_dir(write_marker=False)
+    except Exception:
+        return None
+
+
+def _mark_phone_initialized(w) -> None:
+    """标记本存档已初始化过手机，之后永不自动重置（新游戏是新目录、无此标记）。"""
+    import contextlib
+    with contextlib.suppress(Exception):
+        dd = _phone_data_dir(w)
+        if dd is not None:
+            dd.mkdir(parents=True, exist_ok=True)
+            (dd / "_phone_initialized").write_text("1", encoding="utf-8")
+
+
+def _maybe_reset_phone_on_new_game(ctx) -> None:
+    """新开存档时清空手机数据（仅新局第一轮、且确有旧数据时）。
+
+    双重守卫，绝不误清进行中的存档：
+    1) 上下文含历史压缩摘要 → 被压缩过的对话（摘要是 role=user，伪装成"有 user 无
+       assistant"的新局判定），直接跳过；
+    2) 本存档已写过 ``_phone_initialized`` 标记 → 曾初始化过，永不重置。
     """
     try:
         w = get_phone_widget()
+        msgs = getattr(ctx, "messages", None) or []
+        # 守卫①：压缩摘要在场 → 绝不重置
+        if _context_is_compacted(msgs):
+            return
+        # 守卫②：已初始化标记在场 → 绝不重置
+        dd = _phone_data_dir(w)
+        if dd is not None:
+            with __import__("contextlib").suppress(Exception):
+                if (dd / "_phone_initialized").is_file():
+                    return
         if w is None:
             return
-        msgs = getattr(ctx, "messages", None) or []
         has_user = any(isinstance(m, dict) and m.get("role") == "user" for m in msgs)
         has_assistant = any(isinstance(m, dict) and m.get("role") == "assistant" for m in msgs)
         if not has_user or has_assistant:
@@ -896,6 +1277,9 @@ def _maybe_reset_phone_on_new_game(ctx) -> None:
             _reset_phone_data(w)
     except Exception:
         logger.exception("maybe reset phone on new game failed")
+    finally:
+        # 幂等标记：见过本存档即写标记，之后任何一轮都不再自动重置。
+        _mark_phone_initialized(get_phone_widget())
 
 
 def _on_before_chat(ctx) -> None:
@@ -907,21 +1291,35 @@ def _on_before_chat(ctx) -> None:
         _seed_contacts_from_opening(ctx)
         # 开场若声明「过去收到过（未知）短信」，插件自拟一条并按未知联系人投递（每存档一次）
         _maybe_seed_intro_sms(ctx)
-        # Strip parenthetical instructions like (让XX打电话) from last user msg
+        # Detect + strip parenthetical "让XX打电话" from the last user msg, and remember it
+        # so we can turn it into an explicit incoming-call directive below. (The old phone
+        # acted on this request; the React port only stripped it and silently dropped it.)
         import re as _re_strip
         _paren_re = _re_strip.compile(
-            r'[(（]\s*[让叫]\s*\S+?\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(?:电话|视频|视频电话)?[)）]')
+            r'[(（]\s*[让叫]\s*(\S+?)\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(电话|视频|视频电话)?[)）]')
+        _call_request = None
+        # 本轮玩家用了哪类手机功能 → 对应的大段协议按需注入（省 token，也减少角色跑题）
+        _use_group = _use_moment = _use_browser = False
         for m in reversed(ctx.messages):
             if isinstance(m, dict) and m.get("role") == "user":
                 content = m.get("content", "")
                 if isinstance(content, str):
+                    _lu = content.lstrip()
+                    _use_group = _lu.startswith("[群聊]")
+                    _use_moment = _lu.startswith("[朋友圈]")
+                    _use_browser = _lu.startswith("[浏览器]")
+                    _mo = _paren_re.search(content)
+                    if _mo:
+                        _call_request = (_mo.group(1).strip(), "视频" in (_mo.group(2) or ""))
                     cleaned = _paren_re.sub('', content).strip()
                     if cleaned:
                         m["content"] = cleaned
                 break
 
         msg = (
-            "[手机系统] "
+            "[手机系统]（以下全部是给你的幕后规则和工具用法，绝不可作为台词说出、复述、"
+            "或让玩家察觉；当这一轮玩家并没有通过手机做任何操作时，就当这些规则不存在、"
+            "专心演绎当前的当面剧情，不要主动提手机、短信、好感度之类的元信息。）"
             "当用户消息以[短信]开头时，对方正在通过手机短信和你聊天。"
             "短信回复必须调用 send_sms(角色名, 短信正文) 工具——可连续多次调用发多条"
             "（活泼的角色2-3条、沉稳的1条）；若还没和玩家交换过联系方式则用 send_sms_stranger。"
@@ -933,6 +1331,11 @@ def _on_before_chat(ctx) -> None:
             "speech=\"角色名\"（语音通话）或 speech=\"角色名:视频\"（视频通话）。"
             "输出CALL信号后本轮不要再输出该角色的任何台词——"
             "玩家的手机会响起来电，玩家接听后系统会提示你再开始通话对话。"
+            " [通话状态铁律] 一通电话的接通、进行、挂断，全部由系统事件驱动：只有出现 "
+            "[通话]/[视频通话]/[通话结束] 这类系统提示时，通话状态才真正改变。玩家在通话中或通话后"
+            "打字说「挂了」「喂？」「别挂」之类只是台词，并不代表真的接通或挂断了电话——"
+            "在出现对应系统提示之前，绝不要自行脑补电话接通/挂断、也不要提前替角色生成挂断后的反应。"
+            "（注意：玩家要求某角色「给我打电话」属于要发起来电，应按 [来电] 协议输出 CALL 信号，不在此限。）"
             " [当面场景规则] 先判断你扮演的角色此刻是否与玩家当面同处一处："
             "◆ 若角色就在玩家身边（当面对话中）：严禁打电话或视频通话"
             "（当面直接说话即可，绝对不要输出CALL信号）。短信默认不用、有话当面说，"
@@ -963,7 +1366,7 @@ def _on_before_chat(ctx) -> None:
             "原因：写进 dialog 会显示在主舞台的公开对话里（PHONE 项同样会露出来），而且不会真正到达手机短信。具体："
             "已是联系人→调用 send_sms(角色名, 短信正文)；未交换联系方式但已拿到玩家号码→调用 send_sms_stranger(角色真名, 短信正文)。"
             "可连续多次调用发多条。反例（禁止）：character_name=\"旁白\" 或 \"PHONE\"，speech=\"未知联系人：「……」\"。"
-            "你可以用旁白描写「手机屏幕亮起、一条短信进来」的氛围，但短信正文本身只能走 send_sms / send_sms_stranger 工具。"
+            "另外不要在 dialog/旁白里描写「手机亮起、震动、有短信进来」这类氛围——玩家的手机通知只在手机 App 里体现，主舞台不要提及；短信正文只走 send_sms / send_sms_stranger 工具。"
             " 【玩家指令】当玩家消息里出现「（xx给我发短信）」「（xx给我发消息）」「（让xx发短信）」这类括号指令时，"
             "就是要 xx 主动给玩家发短信——直接用上述工具投递（已建联系人用 send_sms、未建用 send_sms_stranger），"
             "同样不要写进 dialog（旁白/PHONE 都不行）。"
@@ -974,6 +1377,24 @@ def _on_before_chat(ctx) -> None:
             "也不必调工具补它；你只需在剧情里自然承接「玩家手机里确实有这样一条短信」。"
             "之后剧情中【新】产生的短信，仍按上面的[短信投递铁律]用 send_sms / send_sms_stranger 工具。"
         )
+        if _call_request:
+            _cr_name, _cr_video = _call_request
+            _cr_kind = "视频电话" if _cr_video else "电话"
+            # 玩家点名要来电是明确的元指令 —— 直接发起来电，不再赌 LLM 输出 CALL 信号。
+            # （13k-token 的大 prompt + flash 小模型经常忽略它，就成了"让他打电话却没打"。）
+            try:
+                _emit_call_event({"type": "call.incoming", "name": _cr_name,
+                                  "callType": "video" if _cr_video else "voice",
+                                  "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"})
+            except Exception:
+                logger.debug("direct player-requested call.incoming failed", exc_info=True)
+            msg += (
+                f" [幕后安排来电]（玩家在幕后安排剧情、不是当面对白）系统已替「{_cr_name}」向玩家拨出一通{_cr_kind}，"
+                f"玩家手机此刻正在响铃、尚未接听。本轮你【不要】把它当成当面对话来演、【不要】替玩家接听、"
+                f"【不要】再输出通话正文或 CALL 信号（来电已由系统发起）；至多给一句「{_cr_name}」拨号时的简短心理或旁白。"
+                f"等玩家接听后，系统会用 [通话] 提示你再正式开始通话。"
+                f"【演绎要求】把这通电话处理成「{_cr_name} 自己主动想打给玩家」——结合此刻的心情、剧情和你们的关系给个自发理由，"
+                f"绝不要表现出、更不要说出「是玩家要求／安排我才打的」。")
         # ── Player's chosen name (so characters can address them naturally) ──
         try:
             from plugins.shinsekai_chat_phone.settings_app import get_player_name as _gpn, get_player_signature as _gps
@@ -989,48 +1410,85 @@ def _on_before_chat(ctx) -> None:
                     f"可作为了解玩家近况或心情的线索，酌情自然提及、不必刻意）。")
         except Exception:
             pass
-        # ── Group chat protocol (dynamic: read the current groups) ──
+        # ── Affinity（好感度）+ manual-frequency override（幕后态度参照，勿念成台词）──
         try:
-            _wg = get_phone_widget()
-            _group_lines: list[str] = []
-            if _wg is not None and hasattr(_wg, "_group_store"):
-                for _gname in _wg._group_store.get_group_names():
-                    _gmem = "、".join(_wg._group_store.get_members(_gname))
-                    _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
-            msg += (
-                " [群聊] 当用户消息以[群聊]开头时，玩家正在某个群聊里发言。"
-                "群聊是线上聊天，不受上面【当面场景规则】里「当面禁止打电话/视频」的限制——"
-                "即使角色此刻和玩家当面在一起，也可以同时在群里打字发言。"
-                "群聊回复必须使用 send_group_sms(群名, 角色名, 消息) 工具，绝不要输出普通角色对话。"
-                "由你自主决定群里哪些角色回复、每个角色回几条："
-                "有的角色多聊几句、有的只回一句、和当前话题无关的角色可以完全不出现，"
-                "像真实群聊一样错落自然。角色之间也可以互相接话、拌嘴、附和，不必只回复玩家。"
-                "连续多次调用 send_group_sms 即可让不同角色发言或同一角色连发多条。"
-                "本轮除 send_group_sms 工具调用外，不要输出任何 dialog 台词。"
-            )
-            if _group_lines:
-                msg += " 当前已存在的群聊：" + "；".join(_group_lines) + "。"
-            msg += (
-                " 若剧情中出现「把玩家拉进群」「角色们新建了一个群」等情节，"
-                "先调用 create_group(群名, 成员) 工具建群（成员名用、分隔），再让角色在群里发言。"
-                " [群聊成员变动] 群成员和群名可以动态变化，你可以主动演绎："
-                "① add_group_member(群名, 角色, 操作者) 把某角色拉进群——"
-                "注意只有当前群成员能用 send_group_sms 发言，要让新人在群里说话必须先拉进群；"
-                "② remove_group_member(群名, 角色, 操作者) 把某角色踢出群；"
-                "③ leave_group(群名, 角色) 让某角色主动退群；"
-                "④ rename_group(群名, 新群名, 操作者) 改群名。"
-                "（操作者=执行该动作的角色名，可留空。）"
-                "这些变动系统会自动记录、并在下一轮提示相关角色反应，你不必在同一轮硬凑反应——"
-                "如何反应、由谁反应、是否反应，全部根据角色性格与剧情自主演绎。"
-            )
+            from config.config_manager import ConfigManager as _CM_aff
+            from plugins.shinsekai_chat_phone import phone_core as _pc_aff
+            _aff_lines = []
+            _any_manual = False
+            for _c in _CM_aff().config.characters:
+                _cn = _c.name
+                _mn = _pc_aff.is_manual_freq(_cn)
+                _any_manual = _any_manual or _mn
+                _aff_lines.append(f"{_cn} {_pc_aff.get_affinity(_cn)}/100" + ("（玩家强开了手动频率）" if _mn else ""))
+            if _aff_lines:
+                msg += (
+                    " [好感度] 仅供你把握态度、绝不可说出口的内部数值——各角色对玩家的好感度："
+                    + "；".join(_aff_lines) + "。好感度低就冷淡、疏离、被动，高就亲密、主动、黏人，"
+                    "自然融进语气即可；切勿把数字、「好感度」字样或本条说明念成台词。"
+                )
+                if _any_manual:
+                    msg += (
+                        " 上面标注「玩家强开了手动频率」的角色：若是普通人设则毫无察觉、也不在意；"
+                        "唯有【病娇/极端占有型】人设才会隐约觉得玩家在刻意操纵与自己的联系频率，"
+                        "并在玩家转为冷淡敷衍时逐渐情绪失控、质问玩家为何疏远——如何流露完全自行演绎，不要套用固定台词。"
+                    )
         except Exception:
             pass
-        # ── Moments (朋友圈) protocol (dynamic: read recent posts) ──
-        try:
-            _wm = get_phone_widget()
-            _moment_lines: list[str] = []
-            if _wm is not None and hasattr(_wm, "_moments_store"):
-                for _p in _wm._moments_store.get_posts()[-6:]:
+        # ── Group chat protocol — inject only when the player is in a group this turn ──
+        if _use_group:
+            try:
+                _wg = get_phone_widget()
+                _group_lines: list[str] = []
+                if _wg is not None and hasattr(_wg, "_group_store"):
+                    for _gname in _wg._group_store.get_group_names():
+                        _gmem = "、".join(_wg._group_store.get_members(_gname))
+                        _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
+                elif _wg is None:  # React mode: read groups from phone_core (Qt-free)
+                    from plugins.shinsekai_chat_phone import phone_core
+                    for _gname in phone_core.group_names():
+                        _gmem = "、".join(phone_core.group_members(_gname))
+                        _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
+                msg += (
+                    " [群聊] 当用户消息以[群聊]开头时，玩家正在某个群聊里发言。"
+                    "群聊是线上聊天，不受上面【当面场景规则】里「当面禁止打电话/视频」的限制——"
+                    "即使角色此刻和玩家当面在一起，也可以同时在群里打字发言。"
+                    "群聊回复必须使用 send_group_sms(群名, 角色名, 消息) 工具，绝不要输出普通角色对话。"
+                    "由你自主决定群里哪些角色回复、每个角色回几条："
+                    "有的角色多聊几句、有的只回一句、和当前话题无关的角色可以完全不出现，"
+                    "像真实群聊一样错落自然。角色之间也可以互相接话、拌嘴、附和，不必只回复玩家。"
+                    "连续多次调用 send_group_sms 即可让不同角色发言或同一角色连发多条。"
+                    "本轮除 send_group_sms 工具调用外，不要输出任何 dialog 台词。"
+                )
+                if _group_lines:
+                    msg += " 当前已存在的群聊：" + "；".join(_group_lines) + "。"
+                msg += (
+                    " 若剧情中出现「把玩家拉进群」「角色们新建了一个群」等情节，"
+                    "先调用 create_group(群名, 成员) 工具建群（成员名用、分隔），再让角色在群里发言。"
+                    " [群聊成员变动] 群成员和群名可以动态变化，你可以主动演绎："
+                    "① add_group_member(群名, 角色, 操作者) 把某角色拉进群——"
+                    "注意只有当前群成员能用 send_group_sms 发言，要让新人在群里说话必须先拉进群；"
+                    "② remove_group_member(群名, 角色, 操作者) 把某角色踢出群；"
+                    "③ leave_group(群名, 角色) 让某角色主动退群；"
+                    "④ rename_group(群名, 新群名, 操作者) 改群名。"
+                    "（操作者=执行该动作的角色名，可留空。）"
+                    "这些变动系统会自动记录、并在下一轮提示相关角色反应，你不必在同一轮硬凑反应——"
+                    "如何反应、由谁反应、是否反应，全部根据角色性格与剧情自主演绎。"
+                )
+            except Exception:
+                pass
+        # ── Moments (朋友圈) protocol — inject only when the player used 朋友圈 this turn ──
+        if _use_moment:
+            try:
+                _wm = get_phone_widget()
+                _moment_lines: list[str] = []
+                _posts = []
+                if _wm is not None and hasattr(_wm, "_moments_store"):
+                    _posts = _wm._moments_store.get_posts()[-6:]
+                elif _wm is None:  # React mode: read moments from phone_core (Qt-free)
+                    from plugins.shinsekai_chat_phone import phone_core
+                    _posts = phone_core.moment_get_posts()[-6:]
+                for _p in _posts:
                     _who = "我" if _p.get("author") == "__player__" else _p.get("author", "")
                     _body = (_p.get("text", "") or "").replace("\n", " ")[:30]
                     _img = "[图]" if (_p.get("image") or _p.get("image_desc")) else ""
@@ -1042,19 +1500,37 @@ def _on_before_chat(ctx) -> None:
                         _cm = f" 最近评论 {_cw}：{(_last.get('text', '') or '')[:16]}"
                     _moment_lines.append(
                         f"#{_p.get('id')} [{_who}]“{_body}”{_img}（赞{_nl} 评{_nc}）{_cm}")
+                msg += (
+                    " [朋友圈] 当用户消息以[朋友圈]开头时，玩家在朋友圈发了动态、或点赞/评论了某条动态。"
+                    "朋友圈是线上社交，不受上面【当面场景规则】的限制——即使当面在一起也能刷、能评。"
+                    "你可以让相关角色用 post_moment(角色, 正文) 发动态、comment_moment(编号, 角色, 内容) 评论、"
+                    "like_moment(编号, 角色) 点赞来回应；角色之间也可以互相评论、接话。"
+                    "如果是回复动态下某个人的评论（而不是评论动态本身），在 comment_moment 里加 reply_to=被回复者的名字"
+                    "（回复玩家就填「玩家」），会显示成「谁 回复 谁」。"
+                    "由你自主决定谁回应、回几条、是否回应——不感兴趣的角色可以完全不理。"
+                    "引用某条动态时用它的 #编号。本轮除这些工具调用外，不要输出任何 dialog 台词。"
+                )
+                if _moment_lines:
+                    msg += (" 当前朋友圈近况（供参考，不必每轮都发动态；仅在剧情合适时才用 post_moment）："
+                            + "；".join(_moment_lines) + "。")
+            except Exception:
+                pass
+        # ── Browser (浏览器) protocol — only when the player searched this turn ──
+        if _use_browser:
             msg += (
-                " [朋友圈] 当用户消息以[朋友圈]开头时，玩家在朋友圈发了动态、或点赞/评论了某条动态。"
-                "朋友圈是线上社交，不受上面【当面场景规则】的限制——即使当面在一起也能刷、能评。"
-                "你可以让相关角色用 post_moment(角色, 正文) 发动态、comment_moment(编号, 角色, 内容) 评论、"
-                "like_moment(编号, 角色) 点赞来回应；角色之间也可以互相评论、接话。"
-                "如果是回复动态下某个人的评论（而不是评论动态本身），在 comment_moment 里加 reply_to=被回复者的名字"
-                "（回复玩家就填「玩家」），会显示成「谁 回复 谁」。"
-                "由你自主决定谁回应、回几条、是否回应——不感兴趣的角色可以完全不理。"
-                "引用某条动态时用它的 #编号。本轮除这些工具调用外，不要输出任何 dialog 台词。"
+                " [浏览器] 当用户消息以[浏览器]开头时，玩家在手机浏览器里做了一次搜索。"
+                "此刻你要扮演这个世界的“搜索引擎”，而不是任何角色——调用 browser_result 工具，"
+                "为这次搜索返回 4-6 条结果：query 传搜索词，results 传一个 JSON 数组，"
+                "每项包含 title（标题）、snippet（摘要）、site（来源站点，可选）三个字段。"
+                "结果要具体、有细节、够劲爆吸睛，可结合当前剧情与相关角色制造猛料、八卦或反转，"
+                "勾起玩家继续深挖的欲望。本轮除该工具调用外，不要输出任何台词或旁白。"
             )
-            if _moment_lines:
-                msg += (" 当前朋友圈近况（供参考，不必每轮都发动态；仅在剧情合适时才用 post_moment）："
-                        + "；".join(_moment_lines) + "。")
+        # ── Recording (录音) awareness — player may be recording your voice ──
+        try:
+            _rf = Path("data/plugins/com.shinsekai.chat_phone/recording.json")
+            if _rf.is_file() and _json.loads(_rf.read_text(encoding="utf-8")).get("active"):
+                msg += ("（旁白提示：玩家此刻正举着手机，像是在录你的声音——你可以自然地察觉并作出反应，"
+                        "也可以毫无察觉，由你把握，别显得生硬。）")
         except Exception:
             pass
         # Sync proactive SMS the character sent on their own — so the main story
@@ -1118,13 +1594,26 @@ def _on_before_chat(ctx) -> None:
             except Exception:
                 pass
 
-            # Browser history (session-scoped)
+            # Browser history (session-scoped) — incl. searches the player tried to delete
             try:
                 hp2 = _sms_dir / "browser_history.json"
                 if hp2.is_file():
                     hist = _j3.loads(hp2.read_text(encoding="utf-8"))
                     if hist:
-                        intel_parts.append(f"浏览器搜索记录：{_j3.dumps(hist, ensure_ascii=False)}")
+                        vis, deleted = [], []
+                        for _x in hist:
+                            if isinstance(_x, str):
+                                vis.append(_x)
+                            elif isinstance(_x, dict) and str(_x.get("q", "")).strip():
+                                (deleted if _x.get("del") else vis).append(str(_x["q"]))
+                        _bparts = []
+                        if vis:
+                            _bparts.append("浏览器搜索记录：" + _j3.dumps(vis, ensure_ascii=False))
+                        if deleted:
+                            _bparts.append(
+                                "玩家偷偷删掉、以为无人知晓的搜索：" + _j3.dumps(deleted, ensure_ascii=False))
+                        if _bparts:
+                            intel_parts.append("\n".join(_bparts))
             except Exception:
                 pass
 
@@ -1189,6 +1678,42 @@ def _on_before_chat(ctx) -> None:
         logger.exception("Failed to inject chat phone system message")
 
 
+def _qt_ui_active() -> bool:
+    """True if a Qt GUI is running (Qt mode) — then the PhoneWidget path owns the phone."""
+    try:
+        from PySide6.QtWidgets import QApplication
+        return QApplication.instance() is not None
+    except Exception:
+        return False
+
+
+def _on_init_chat(ctx, char_settings: dict) -> None:
+    """Start the Qt-free proactive monitor in React mode (runs in the chat runtime).
+
+    In Qt mode build_widget starts the QTimer ProactiveMonitor instead, so skip when a
+    Qt GUI is present. Started once per chat; characters then text / post moments on
+    their own via phone_core (SMS + moments — proactive calls need the Qt call UI).
+    """
+    try:
+        if _qt_ui_active():
+            return
+        if get_monitor() is not None:
+            return
+        from plugins.shinsekai_chat_phone.proactive_core import ProactiveCore
+        m = ProactiveCore()
+        m.set_character_settings(char_settings)
+        try:
+            fp = Path("data/plugins/com.shinsekai.chat_phone/freq_config.json")
+            if fp.is_file():
+                m.set_frequency_config(_json.loads(fp.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+        m.start(interval_sec=60)
+        set_monitor(m)
+    except Exception:
+        logger.exception("Failed to start proactive core (React mode)")
+
+
 # ── Plugin ────────────────────────────────────────────────────────────
 
 class ChatPhonePlugin(PluginBase):
@@ -1215,66 +1740,23 @@ class ChatPhonePlugin(PluginBase):
         except Exception:
             char_settings = {}
 
-        # React Chat: register a host-rendered top-bar button and a static plugin
-        # page. Older hosts do not expose these SDK types/methods, so the classic
-        # Qt phone below remains the compatibility path.
-        if FrontendChatUIContribution is not None and FrontendPageContribution is not None:
-            registered_frontend_page = False
-            try:
-                frontend_entry = (
-                    Path(__file__).resolve().parent / "frontend" / "dist" / "index.html"
-                )
-                register.register_frontend_page(
-                    FrontendPageContribution(
-                        page_id=FRONTEND_PAGE_ID,
-                        title="Chat Phone",
-                        kind="tools",
-                        description="Open the Chat Phone over the active conversation.",
-                        entry=frontend_entry.as_posix(),
-                        order=50.0,
-                    )
-                )
-                register.register_frontend_chat_ui(
-                    FrontendChatUIContribution(
-                        contribution_id=TOP_BAR_CONTRIBUTION_ID,
-                        slot="chat-top-toolbar",
-                        title="Chat Phone",
-                        description="Open Chat Phone",
-                        icon="smartphone",
-                        presentation="icon-only",
-                        action={
-                            "type": "open-plugin-page",
-                            "page_id": FRONTEND_PAGE_ID,
-                            "mode": "overlay",
-                        },
-                        order=50.0,
-                    )
-                )
-                registered_frontend_page = True
-            except AttributeError:
-                logger.debug("Host does not provide React Chat frontend page APIs")
-            except Exception:
-                logger.exception("Failed to register Chat Phone React integration")
-            if registered_frontend_page:
-                try:
-                    bind_frontend_ui(register.frontend_ui())
-                except AttributeError:
-                    logger.debug("Host does not provide runtime frontend page presentation")
-                except Exception:
-                    logger.exception("Failed to bind Chat Phone runtime page presentation")
-
         # Chat UI widget
         def build_widget(ctx: ChatUIContext) -> object:
             try:
-                from plugins.shinsekai_chat_phone.phone_widget import PhoneWidget
-                from plugins.shinsekai_chat_phone.proactive_monitor import ProactiveMonitor
+                from plugins.shinsekai_chat_phone.legacy_qt.phone_widget import PhoneWidget
+                from plugins.shinsekai_chat_phone.legacy_qt.proactive_monitor import ProactiveMonitor
                 w = PhoneWidget(submit_cb=ctx.submit_user_message)
                 set_phone_widget(w)
+                _old = get_monitor()  # stop any React-mode proactive_core from the init hook
+                if _old is not None:
+                    try:
+                        _old.stop()
+                    except Exception:
+                        pass
                 monitor = ProactiveMonitor(w.contact_store(), w.message_store())
                 monitor.set_character_settings(char_settings)
                 monitor.new_message.connect(w.notify_new_message)
                 monitor.incoming_call.connect(w._on_incoming_call)
-                monitor.incoming_call.connect(present_incoming_call)
                 monitor.start(interval_sec=60)
                 set_monitor(monitor)
                 # Load saved frequency config
@@ -1304,6 +1786,10 @@ class ChatPhonePlugin(PluginBase):
 
         # Before-chat hook: inject PHONE format, strip phone-call parens
         register.register_before_chat_hook(_on_before_chat)
+
+        # Init-chat hook: start the Qt-free proactive monitor when running headless
+        # (React desktop). In Qt mode the widget path starts its own QTimer monitor.
+        register.register_init_chat_hook(lambda ctx: _on_init_chat(ctx, char_settings))
 
         # ── Combined: Avatar + Theme + Frequency ──
         char_names = list(char_settings.keys())
@@ -1390,11 +1876,61 @@ class ChatPhonePlugin(PluginBase):
             order=52.0,
         ))
 
+        # ── Doki-style web phone (new 2.3 React UI) ──
+        # An iframe page + a single JSON-RPC action that drives the whole phone.
+        try:
+            from plugins.shinsekai_chat_phone import webface
+            # plugin_root is the DATA dir; the bundled frontend lives next to the code.
+            phone_entry = str((Path(__file__).parent / "frontend" / "dist" / "index.html").resolve())
+            logger.info("Doki phone entry=%s exists=%s", phone_entry, Path(phone_entry).is_file())
+            register.register_frontend_page(FrontendPageContribution(
+                page_id="chat_phone_app",
+                title="Phone (Doki)",
+                kind="tools",
+                entry=phone_entry,
+                description="Doki-style phone: SMS / contacts / moments",
+                order=40.0,
+            ))
+            register.register_frontend_config_page(FrontendConfigContribution(
+                page_id="chat_phone_app",
+                title="Phone (Doki)",
+                kind="tools",
+                description="Doki-style phone: SMS / contacts / moments",
+                schema=[],
+                load_values=lambda: {},
+                save_values=lambda _v: None,
+                actions=[FrontendConfigAction(id="rpc", label="rpc", run=webface.rpc)],
+                order=40.0,
+            ))
+            try:
+                set_frontend_ui(register.frontend_ui())
+            except AttributeError:
+                logger.debug("runtime frontend page presentation is unavailable")
+            except Exception:
+                logger.exception("Failed to bind runtime phone page presentation")
+            # Toolbar entry (host: codex chat-UI slots) — a phone button in the top
+            # stage toolbar that pops the phone page as a floating overlay. Guarded:
+            # hosts without register_frontend_chat_ui simply skip it.
+            try:
+                from sdk.types import FrontendChatUIContribution
+                if hasattr(register, "register_frontend_chat_ui"):
+                    register.register_frontend_chat_ui(FrontendChatUIContribution(
+                        contribution_id="open_phone",
+                        slot="chat-top-toolbar",
+                        title="手机",
+                        icon="smartphone",
+                        action={"type": "open-plugin-page", "page_id": "chat_phone_app", "mode": "overlay"},
+                        order=40.0,
+                    ))
+            except Exception:
+                logger.debug("chat-UI toolbar slot unavailable; skipping phone toolbar entry", exc_info=True)
+        except Exception:
+            logger.exception("Failed to register Doki web phone page")
+
         logger.info("Chat Phone initialized (chars=%d)", len(char_settings))
 
     def shutdown(self) -> None:
         m = get_monitor()
         if m is not None:
             m.stop()
-        clear_frontend_ui()
         clear_refs()

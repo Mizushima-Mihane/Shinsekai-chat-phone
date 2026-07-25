@@ -349,11 +349,11 @@ class SettingsApp(QWidget):
         enabled = self._dnd_btn.isChecked()
         set_dnd(enabled)
         self._dnd_btn.setText("开" if enabled else "关")
-        from plugins.shinsekai_chat_phone.home_screen import _set_dnd_visible
+        from plugins.shinsekai_chat_phone.legacy_qt.home_screen import _set_dnd_visible
         _set_dnd_visible(enabled)
 
     def _open_hacker_mode(self):
-        from plugins.shinsekai_chat_phone.freq_config_ui import FreqConfigWidget
+        from plugins.shinsekai_chat_phone.legacy_qt.freq_config_ui import FreqConfigWidget
         self._hacker_widget = FreqConfigWidget()
         self._hacker_widget.on_back.connect(self._close_hacker_mode)
         # Replace content with hacker widget

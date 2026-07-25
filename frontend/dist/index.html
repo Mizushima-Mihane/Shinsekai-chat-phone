@@ -356,6 +356,7 @@
     try { data = await rpc("all"); loaded = true; } catch(e){ data = {}; }
     data.avatars = avatarsCache;                      // reattach cached avatars (all() no longer ships them)
     try { applyTheme(data.settings && data.settings.theme); } catch(e){}
+    try { postHost("size","size",{mini:(data.settings&&data.settings.phoneSize)==="mini"}); } catch(e){}
   }
   async function loadAvatars(){
     try { var a = await rpc("avatars"); if(a && a.avatars){ avatarsCache = a.avatars; data.avatars = avatarsCache; } } catch(e){}
@@ -896,6 +897,10 @@
         '<button class="toggle'+(s.proactiveEnabled!==false?" on":"")+'" id="s-pro" role="switch" aria-checked="'+(s.proactiveEnabled!==false?"true":"false")+'"><i></i></button></div>'+
         '<div class="set-sub" style="padding:0 15px 12px">开启后，各角色按自己的好感度（在 TA 的聊天设置里）自主决定联系频率；关闭则谁都不会主动找你。好感度不受此开关影响，照常随剧情增减。</div></div>'+
       '<div class="section-title">主题色</div><div class="set-card pad"><div class="swatches">'+sw+'</div></div>'+
+      '<div class="section-title">手机大小</div><div class="set-card pad"><div class="freq-row">'+
+        [["正常","normal"],["迷你","mini"]].map(function(o){
+          return '<button class="freq-opt'+((s.phoneSize||"normal")===o[1]?" on":"")+'" data-size="'+o[1]+'" type="button">'+o[0]+'</button>';
+        }).join("")+'</div><div class="set-sub">把悬浮手机整体缩小，腾出屏幕空间（短信、通话都照常）。</div></div>'+
       ((s.hacked&&s.hacked.length)?'<div class="section-title">监控</div><div class="set-card"><div class="set-row"><span>被监控</span><b>'+s.hacked.map(esc).join("、")+'</b></div></div>':'')+
       '<div class="set-note">勿扰与主动联系频率会在角色下一次检查(约 1 分钟内)生效。</div>'+
       '<div style="height:14px"></div></div>';
@@ -931,6 +936,13 @@
     });
     var pro = screen.querySelector("#s-pro");
     if(pro) pro.onclick = function(){ var on=!pro.classList.contains("on"); pro.classList.toggle("on",on); pro.setAttribute("aria-checked",on?"true":"false"); rpc("set_freq",{level:on?2:0}); };
+    screen.querySelectorAll("[data-size]").forEach(function(el){ el.onclick=function(){
+      screen.querySelectorAll("[data-size]").forEach(function(x){ x.classList.remove("on"); }); el.classList.add("on");
+      var sz = el.getAttribute("data-size");
+      if(data.settings) data.settings.phoneSize = sz;
+      rpc("set_phone_size",{size:sz});
+      postHost("size","size",{mini: sz==="mini"});
+    }; });
   };
 
   // ── Stubs (work in progress) ──

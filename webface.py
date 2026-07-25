@@ -641,6 +641,7 @@ def _settings() -> dict[str, Any]:
         "proactiveLevel": level,
         "proactiveEnabled": bool(fc.get("_enabled", True)),
         "playerAvatar": str(prefs.get("player_avatar", "") or ""),
+        "phoneSize": str(prefs.get("phone_size", "normal") or "normal"),
         "yandere": bool(prefs.get("yandere", False)),
         "hacked": [str(x) for x in (sess.get("hacked_characters") or [])],
     }
@@ -1080,6 +1081,9 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             return {"ok": True}
         if cmd == "set_player_avatar":
             _write_prefs({"player_avatar": str(args.get("data", "") or "")})
+            return {"ok": True}
+        if cmd == "set_phone_size":
+            _write_prefs({"phone_size": ("mini" if str(args.get("size", "")) == "mini" else "normal")})
             return {"ok": True}
         if cmd == "set_dnd":
             _write_session({"dnd": bool(args.get("on"))})

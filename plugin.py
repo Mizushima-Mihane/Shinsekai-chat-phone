@@ -12,8 +12,29 @@ from sdk.plugin import PluginBase
 from sdk.plugin_host_context import PluginHostContext
 from sdk.register import PluginCapabilityRegistry
 from sdk.tool_registry import tool
-from sdk.types import ChatUIContribution, FrontendConfigAction, FrontendConfigContribution, ToolsTabContribution
+from sdk.types import (
+    ChatUIContribution,
+    FrontendConfigAction,
+    FrontendConfigContribution,
+    ToolsTabContribution,
+)
 from sdk.plugin_host_context import PluginSettingsUIContext
+
+try:
+    from sdk.types import FrontendChatUIContribution, FrontendPageContribution
+except ImportError:  # Compatibility with hosts released before the React page API.
+    FrontendChatUIContribution = None
+    FrontendPageContribution = None
+
+from plugins.shinsekai_chat_phone.frontend_integration import (
+    PAGE_ID as FRONTEND_PAGE_ID,
+    TOP_BAR_CONTRIBUTION_ID,
+    bind_frontend_ui,
+    clear_frontend_ui,
+    extract_incoming_call,
+    present_incoming_call,
+    strip_incoming_call_markers,
+)
 
 logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
@@ -363,11 +384,19 @@ def _resolve_session_dir() -> Path:
 
 def _on_message_added(ctx: MessageAddedContext, char_settings: dict) -> None:
     """Handle assistant message — capture SMS replies, detect hangups, scan yandere."""
-    w = get_phone_widget()
-    if w is None or ctx.role != "assistant":
+    if ctx.role != "assistant":
         return
     content = ctx.message.get("content", "") if isinstance(ctx.message, dict) else ""
     if not content:
+        return
+    incoming_call = extract_incoming_call(content, char_settings)
+    if incoming_call is not None:
+        present_incoming_call(*incoming_call)
+    w = get_phone_widget()
+    if w is None:
+        stripped = strip_incoming_call_markers(content)
+        if stripped is not None and isinstance(ctx.message, dict):
+            ctx.message["content"] = stripped
         return
     # Strip leading non-JSON text
     content = content.strip()
@@ -1167,7 +1196,7 @@ class ChatPhonePlugin(PluginBase):
     @property
     def plugin_id(self) -> str: return "com.shinsekai.chat_phone"
     @property
-    def plugin_version(self) -> str: return "1.0.0"
+    def plugin_version(self) -> str: return "1.1.0"
     @property
     def plugin_name(self) -> str: return "Chat Phone"
     @property
@@ -1186,6 +1215,54 @@ class ChatPhonePlugin(PluginBase):
         except Exception:
             char_settings = {}
 
+        # React Chat: register a host-rendered top-bar button and a static plugin
+        # page. Older hosts do not expose these SDK types/methods, so the classic
+        # Qt phone below remains the compatibility path.
+        if FrontendChatUIContribution is not None and FrontendPageContribution is not None:
+            registered_frontend_page = False
+            try:
+                frontend_entry = (
+                    Path(__file__).resolve().parent / "frontend" / "dist" / "index.html"
+                )
+                register.register_frontend_page(
+                    FrontendPageContribution(
+                        page_id=FRONTEND_PAGE_ID,
+                        title="Chat Phone",
+                        kind="tools",
+                        description="Open the Chat Phone over the active conversation.",
+                        entry=frontend_entry.as_posix(),
+                        order=50.0,
+                    )
+                )
+                register.register_frontend_chat_ui(
+                    FrontendChatUIContribution(
+                        contribution_id=TOP_BAR_CONTRIBUTION_ID,
+                        slot="chat-top-toolbar",
+                        title="Chat Phone",
+                        description="Open Chat Phone",
+                        icon="smartphone",
+                        presentation="icon-only",
+                        action={
+                            "type": "open-plugin-page",
+                            "page_id": FRONTEND_PAGE_ID,
+                            "mode": "overlay",
+                        },
+                        order=50.0,
+                    )
+                )
+                registered_frontend_page = True
+            except AttributeError:
+                logger.debug("Host does not provide React Chat frontend page APIs")
+            except Exception:
+                logger.exception("Failed to register Chat Phone React integration")
+            if registered_frontend_page:
+                try:
+                    bind_frontend_ui(register.frontend_ui())
+                except AttributeError:
+                    logger.debug("Host does not provide runtime frontend page presentation")
+                except Exception:
+                    logger.exception("Failed to bind Chat Phone runtime page presentation")
+
         # Chat UI widget
         def build_widget(ctx: ChatUIContext) -> object:
             try:
@@ -1197,6 +1274,7 @@ class ChatPhonePlugin(PluginBase):
                 monitor.set_character_settings(char_settings)
                 monitor.new_message.connect(w.notify_new_message)
                 monitor.incoming_call.connect(w._on_incoming_call)
+                monitor.incoming_call.connect(present_incoming_call)
                 monitor.start(interval_sec=60)
                 set_monitor(monitor)
                 # Load saved frequency config
@@ -1318,4 +1396,5 @@ class ChatPhonePlugin(PluginBase):
         m = get_monitor()
         if m is not None:
             m.stop()
+        clear_frontend_ui()
         clear_refs()

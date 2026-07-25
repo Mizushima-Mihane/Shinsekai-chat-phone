@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Chat Phone</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="phone-shell" aria-live="polite">
+      <header class="status-bar">
+        <time id="clock">09:41</time>
+        <div class="status-icons" aria-label="设备状态">
+          <span class="signal" aria-hidden="true"></span>
+          <span aria-hidden="true">⌁</span>
+          <span class="battery" aria-hidden="true"></span>
+        </div>
+      </header>
+
+      <section class="screen home-screen" data-view="home">
+        <div class="home-copy">
+          <p class="eyebrow">SHINSEKAI</p>
+          <h1>Chat Phone</h1>
+          <p>你的故事，正在连接。</p>
+        </div>
+
+        <div class="app-grid" aria-label="手机应用">
+          <button class="app-tile" data-app="messages" type="button">
+            <span class="app-icon messages-icon" aria-hidden="true">●</span>
+            <span>短信</span>
+          </button>
+          <button class="app-tile" data-app="contacts" type="button">
+            <span class="app-icon contacts-icon" aria-hidden="true">人</span>
+            <span>联系人</span>
+          </button>
+          <button class="app-tile" data-app="calls" type="button">
+            <span class="app-icon calls-icon" aria-hidden="true">☎</span>
+            <span>通话</span>
+          </button>
+          <button class="app-tile" data-app="settings" type="button">
+            <span class="app-icon settings-icon" aria-hidden="true">⚙</span>
+            <span>设置</span>
+          </button>
+        </div>
+
+        <p class="compat-note" id="compat-note">完整手机功能仍可在经典 Qt 聊天界面使用。</p>
+      </section>
+
+      <section class="screen incoming-screen" data-view="incoming-call" hidden>
+        <div class="call-glow" aria-hidden="true"></div>
+        <p class="call-kicker" id="call-kind">语音来电</p>
+        <div class="caller-avatar" id="caller-avatar" aria-hidden="true">?</div>
+        <h1 id="caller-name">未知联系人</h1>
+        <p class="call-status">正在呼叫你…</p>
+
+        <div class="call-actions">
+          <button class="call-action call-action--secondary" id="view-phone" type="button">
+            <span aria-hidden="true">▦</span>
+            查看手机
+          </button>
+          <button class="call-action call-action--dismiss" id="dismiss-call" type="button">
+            <span aria-hidden="true">×</span>
+            稍后
+          </button>
+        </div>
+      </section>
+
+      <button class="close-button" id="close-overlay" type="button" aria-label="关闭手机">×</button>
+      <div class="home-indicator" aria-hidden="true"></div>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

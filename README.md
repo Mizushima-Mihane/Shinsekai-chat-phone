@@ -1,5 +1,14 @@
 # Chat Phone
 
+## React Chat integration
+
+On Shinsekai versions that provide the generic frontend page APIs, Chat Phone
+registers a host-rendered smartphone button in `chat-top-toolbar`. The button
+opens the plugin's bundled phone page as an overlay. Explicit `CALL` dialog
+markers are translated inside the plugin into `frontend_ui.present_page()`, so
+incoming calls can surface automatically without adding phone-specific events
+to the host. The classic Qt phone widget remains available on older hosts.
+
 Shinsekai 手机模拟器插件。在聊天界面中嵌入一个完整的手机组件，支持短信、通话、浏览器、音乐控制等功能。
 
 ## 功能

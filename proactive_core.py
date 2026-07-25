@@ -243,14 +243,19 @@ class ProactiveCore:
         for name in contacts:
             if name not in valid:
                 continue
-            lvl = phone_core.get_char_freq(name)
-            if lvl == 0:
-                continue  # 该角色的主动联系已在角色设置里关闭
-            char_scale = {1: 0.5, 2: 1.0, 3: 2.0}.get(lvl, 1.0)
-            # 认识时长渐进：刚加的联系人几乎不主动，约一周才升到正常水平
-            _added = phone_core.contact_added_at(name)
-            _days = ((now - _added) / 86400.0) if _added else 999.0
-            fam = min(1.0, max(0.05, _days / 7.0))
+            # 手动模式：玩家在角色设置里强行设了固定档位；自主模式：跟随好感度自然升温
+            if phone_core.is_manual_freq(name):
+                lvl = phone_core.get_char_freq(name)
+                if lvl == 0:
+                    continue  # 玩家手动关闭了该角色的主动联系
+                char_scale = {1: 0.5, 2: 1.0, 3: 2.0}.get(lvl, 1.0)
+            else:
+                # 自主：好感度即熟悉/亲密度，默认偏低(20)、随剧情升温，
+                # 天然实现"人与人交往不是一蹴而就、刚认识不该发很多消息"
+                aff = phone_core.get_affinity(name)
+                if aff <= 0:
+                    continue  # 好感度见底，该角色不再主动搭理玩家
+                char_scale = aff / 50.0  # 20→0.4, 50→1.0, 100→2.0
             # Moments: independent low-freq roll, unaffected by scene / no-double-text.
             if self._maybe_post_moment(name):
                 continue
@@ -259,7 +264,7 @@ class ProactiveCore:
             if name in scene:
                 continue  # face-to-face — say it in person, don't text / call
             # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
-            if self._maybe_call(name, scale * char_scale * fam):
+            if self._maybe_call(name, scale * char_scale):
                 continue  # rang the player — don't also text this tick
             try:
                 from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
@@ -272,7 +277,7 @@ class ProactiveCore:
             if not yandere and last is not None and not last.get("is_user"):
                 continue
             fc = fc_all.get(name, {}) or {}
-            sms_base = fc.get("sms", 0.1) * scale * char_scale * fam
+            sms_base = fc.get("sms", 0.1) * scale * char_scale
             if yandere:
                 sms_base = min(sms_base * 2.5, 0.8)
             urge = self._urge.get(name, 0.0) + random.uniform(0, sms_base * 2)

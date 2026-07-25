@@ -1899,7 +1899,12 @@ class ChatPhonePlugin(PluginBase):
                 actions=[FrontendConfigAction(id="rpc", label="rpc", run=webface.rpc)],
                 order=40.0,
             ))
-            register.register_user_input_trigger(webface.bind_user_input_trigger)
+            try:
+                webface.bind_frontend_user_input(register.frontend_user_input())
+            except AttributeError:
+                logger.debug("frontend user-input transport is unavailable")
+            except Exception:
+                logger.exception("Failed to bind frontend user-input transport")
             try:
                 set_frontend_ui(register.frontend_ui())
             except AttributeError:
@@ -1934,7 +1939,7 @@ class ChatPhonePlugin(PluginBase):
         try:
             from plugins.shinsekai_chat_phone import webface
 
-            webface.bind_user_input_trigger(None)
+            webface.bind_frontend_user_input(None)
         except Exception:
             pass
         clear_refs()

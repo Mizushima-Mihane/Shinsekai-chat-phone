@@ -32,15 +32,15 @@ logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
 PLAYER = "__player__"
 _BASE = Path("data/plugins/com.shinsekai.chat_phone")
-_USER_INPUT_TRIGGER = None
-_USER_INPUT_TRIGGER_LOCK = threading.RLock()
+_FRONTEND_USER_INPUT = None
+_FRONTEND_USER_INPUT_LOCK = threading.RLock()
 
 
-def bind_user_input_trigger(emit) -> None:
-    """Bind the host-provided user-input emitter for this plugin process."""
-    global _USER_INPUT_TRIGGER
-    with _USER_INPUT_TRIGGER_LOCK:
-        _USER_INPUT_TRIGGER = emit
+def bind_frontend_user_input(controller) -> None:
+    """Bind the host transport used by this plugin's frontend actions."""
+    global _FRONTEND_USER_INPUT
+    with _FRONTEND_USER_INPUT_LOCK:
+        _FRONTEND_USER_INPUT = controller
 
 
 # ── paths ────────────────────────────────────────────────────────────
@@ -284,14 +284,15 @@ def _moment_like(post_id: Any) -> dict[str, Any]:
 
 
 def _trigger_runtime_turn(text: str) -> bool:
-    """Inject a private phone turn through the host's user-input trigger API."""
-    with _USER_INPUT_TRIGGER_LOCK:
-        trigger = _USER_INPUT_TRIGGER
-    if trigger is not None:
+    """Submit a private phone turn through the host's frontend input transport."""
+    with _FRONTEND_USER_INPUT_LOCK:
+        controller = _FRONTEND_USER_INPUT
+    if controller is not None:
         try:
-            return trigger(text) is not False
+            controller.submit_text(text)
+            return True
         except Exception:
-            logger.debug("phone user-input trigger failed", exc_info=True)
+            logger.debug("phone frontend user input failed", exc_info=True)
     return False
 
 

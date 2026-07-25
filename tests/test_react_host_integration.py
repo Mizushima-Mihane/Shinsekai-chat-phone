@@ -139,13 +139,21 @@ def test_author_page_handles_generic_payload_and_gentle_vibration() -> None:
     assert "@media (prefers-reduced-motion:reduce)" in page
 
 
-def test_runtime_turn_uses_the_host_user_input_trigger() -> None:
+def test_runtime_turn_uses_the_host_frontend_input_transport() -> None:
     webface = _load_phone_module("webface")
-    sent: list[str] = []
-    webface.bind_user_input_trigger(sent.append)
+
+    class FrontendUserInput:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def submit_text(self, text: str) -> None:
+            self.sent.append(text)
+
+    controller = FrontendUserInput()
+    webface.bind_frontend_user_input(controller)
 
     assert webface._trigger_runtime_turn("[短信] 请角色回复") is True
-    assert sent == ["[短信] 请角色回复"]
+    assert controller.sent == ["[短信] 请角色回复"]
 
 
 def test_profile_rpc_writes_the_signature_key_used_by_python(monkeypatch) -> None:

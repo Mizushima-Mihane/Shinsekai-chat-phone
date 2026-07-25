@@ -112,6 +112,7 @@ class ProactiveCore:
         self._freq_config: dict = {}
         self._scene_chars: dict[str, float] = {}
         self._urge: dict[str, float] = {}
+        self._last_reach: dict[str, float] = {}  # last proactive SMS/call time per char (anti-spam cooldown)
         self._interval = 60.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -124,6 +125,7 @@ class ProactiveCore:
     def set_frequency_config(self, config: dict) -> None:
         self._freq_config = dict(config or {})
         self._urge = {}
+        self._last_reach = {}
 
     # ── scene state (fed by the message-added hook) ───────────────────
     def set_scene_character(self, name: str) -> None:
@@ -263,19 +265,34 @@ class ProactiveCore:
                 continue  # 勿扰: suppress proactive SMS + calls (ambient moments still allowed)
             if name in scene:
                 continue  # face-to-face — say it in person, don't text / call
-            # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
-            if self._maybe_call(name, scale * char_scale):
-                continue  # rang the player — don't also text this tick
             try:
                 from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
                 yandere = is_character_yandere(name)
             except Exception:
                 yandere = False
-            # Don't double-text: a normal character who already reached out and hasn't
-            # been answered stays quiet (avoids "在吗?在吗?"). Yandere may pile on.
+            # Absolute anti-spam cooldown: after one proactive SMS/call, stay quiet for a
+            # while so a character can't machine-gun the player. Yandere is more persistent
+            # (shorter), and higher affinity / level reaches out more often — but all bounded.
+            _reach_cd = (1200.0 if yandere else 2400.0) / max(0.6, min(1.6, char_scale))
+            if now - self._last_reach.get(name, 0.0) < _reach_cd:
+                continue  # reached out recently — hold off this tick
+            # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
+            if self._maybe_call(name, scale * char_scale):
+                self._last_reach[name] = now
+                continue  # rang the player — don't also text this tick
+            # Don't double-text: a normal character who already reached out and hasn't been
+            # answered stays quiet (avoids "在吗?在吗?"). Yandere may follow up, but caps out.
             last = phone_core.last_message(name)
-            if not yandere and last is not None and not last.get("is_user"):
-                continue
+            if last is not None and not last.get("is_user"):
+                if not yandere:
+                    continue
+                streak = 0
+                for _m in reversed(phone_core.messages_for(name)[-8:]):
+                    if _m.get("is_user"):
+                        break
+                    streak += 1
+                if streak >= 3:
+                    continue  # already 3 unanswered in a row — even yandere backs off
             fc = fc_all.get(name, {}) or {}
             sms_base = fc.get("sms", 0.1) * scale * char_scale
             if yandere:
@@ -289,6 +306,7 @@ class ProactiveCore:
                     try:
                         phone_core.deliver_sms(name, text)
                         phone_core.record_pending_proactive(name, text)
+                        self._last_reach[name] = now
                         logger.info("Proactive SMS from %s", name)
                     except Exception:
                         logger.debug("proactive deliver failed", exc_info=True)

@@ -1203,10 +1203,16 @@ def _on_before_chat(ctx) -> None:
         _paren_re = _re_strip.compile(
             r'[(（]\s*[让叫]\s*(\S+?)\s*(?:给[我咱])?\s*(?:打|拨)\s*(?:个)?\s*(电话|视频|视频电话)?[)）]')
         _call_request = None
+        # 本轮玩家用了哪类手机功能 → 对应的大段协议按需注入（省 token，也减少角色跑题）
+        _use_group = _use_moment = _use_browser = False
         for m in reversed(ctx.messages):
             if isinstance(m, dict) and m.get("role") == "user":
                 content = m.get("content", "")
                 if isinstance(content, str):
+                    _lu = content.lstrip()
+                    _use_group = _lu.startswith("[群聊]")
+                    _use_moment = _lu.startswith("[朋友圈]")
+                    _use_browser = _lu.startswith("[浏览器]")
                     _mo = _paren_re.search(content)
                     if _mo:
                         _call_request = (_mo.group(1).strip(), "视频" in (_mo.group(2) or ""))
@@ -1334,93 +1340,96 @@ def _on_before_chat(ctx) -> None:
                     )
         except Exception:
             pass
-        # ── Group chat protocol (dynamic: read the current groups) ──
-        try:
-            _wg = get_phone_widget()
-            _group_lines: list[str] = []
-            if _wg is not None and hasattr(_wg, "_group_store"):
-                for _gname in _wg._group_store.get_group_names():
-                    _gmem = "、".join(_wg._group_store.get_members(_gname))
-                    _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
-            elif _wg is None:  # React mode: read groups from phone_core (Qt-free)
-                from plugins.shinsekai_chat_phone import phone_core
-                for _gname in phone_core.group_names():
-                    _gmem = "、".join(phone_core.group_members(_gname))
-                    _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
+        # ── Group chat protocol — inject only when the player is in a group this turn ──
+        if _use_group:
+            try:
+                _wg = get_phone_widget()
+                _group_lines: list[str] = []
+                if _wg is not None and hasattr(_wg, "_group_store"):
+                    for _gname in _wg._group_store.get_group_names():
+                        _gmem = "、".join(_wg._group_store.get_members(_gname))
+                        _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
+                elif _wg is None:  # React mode: read groups from phone_core (Qt-free)
+                    from plugins.shinsekai_chat_phone import phone_core
+                    for _gname in phone_core.group_names():
+                        _gmem = "、".join(phone_core.group_members(_gname))
+                        _group_lines.append(f"「{_gname}」（成员：{_gmem}）")
+                msg += (
+                    " [群聊] 当用户消息以[群聊]开头时，玩家正在某个群聊里发言。"
+                    "群聊是线上聊天，不受上面【当面场景规则】里「当面禁止打电话/视频」的限制——"
+                    "即使角色此刻和玩家当面在一起，也可以同时在群里打字发言。"
+                    "群聊回复必须使用 send_group_sms(群名, 角色名, 消息) 工具，绝不要输出普通角色对话。"
+                    "由你自主决定群里哪些角色回复、每个角色回几条："
+                    "有的角色多聊几句、有的只回一句、和当前话题无关的角色可以完全不出现，"
+                    "像真实群聊一样错落自然。角色之间也可以互相接话、拌嘴、附和，不必只回复玩家。"
+                    "连续多次调用 send_group_sms 即可让不同角色发言或同一角色连发多条。"
+                    "本轮除 send_group_sms 工具调用外，不要输出任何 dialog 台词。"
+                )
+                if _group_lines:
+                    msg += " 当前已存在的群聊：" + "；".join(_group_lines) + "。"
+                msg += (
+                    " 若剧情中出现「把玩家拉进群」「角色们新建了一个群」等情节，"
+                    "先调用 create_group(群名, 成员) 工具建群（成员名用、分隔），再让角色在群里发言。"
+                    " [群聊成员变动] 群成员和群名可以动态变化，你可以主动演绎："
+                    "① add_group_member(群名, 角色, 操作者) 把某角色拉进群——"
+                    "注意只有当前群成员能用 send_group_sms 发言，要让新人在群里说话必须先拉进群；"
+                    "② remove_group_member(群名, 角色, 操作者) 把某角色踢出群；"
+                    "③ leave_group(群名, 角色) 让某角色主动退群；"
+                    "④ rename_group(群名, 新群名, 操作者) 改群名。"
+                    "（操作者=执行该动作的角色名，可留空。）"
+                    "这些变动系统会自动记录、并在下一轮提示相关角色反应，你不必在同一轮硬凑反应——"
+                    "如何反应、由谁反应、是否反应，全部根据角色性格与剧情自主演绎。"
+                )
+            except Exception:
+                pass
+        # ── Moments (朋友圈) protocol — inject only when the player used 朋友圈 this turn ──
+        if _use_moment:
+            try:
+                _wm = get_phone_widget()
+                _moment_lines: list[str] = []
+                _posts = []
+                if _wm is not None and hasattr(_wm, "_moments_store"):
+                    _posts = _wm._moments_store.get_posts()[-6:]
+                elif _wm is None:  # React mode: read moments from phone_core (Qt-free)
+                    from plugins.shinsekai_chat_phone import phone_core
+                    _posts = phone_core.moment_get_posts()[-6:]
+                for _p in _posts:
+                    _who = "我" if _p.get("author") == "__player__" else _p.get("author", "")
+                    _body = (_p.get("text", "") or "").replace("\n", " ")[:30]
+                    _img = "[图]" if (_p.get("image") or _p.get("image_desc")) else ""
+                    _nl = len(_p.get("likes", [])); _nc = len(_p.get("comments", []))
+                    _cm = ""
+                    if _p.get("comments"):
+                        _last = _p["comments"][-1]
+                        _cw = "我" if _last.get("is_user") else _last.get("author", "")
+                        _cm = f" 最近评论 {_cw}：{(_last.get('text', '') or '')[:16]}"
+                    _moment_lines.append(
+                        f"#{_p.get('id')} [{_who}]“{_body}”{_img}（赞{_nl} 评{_nc}）{_cm}")
+                msg += (
+                    " [朋友圈] 当用户消息以[朋友圈]开头时，玩家在朋友圈发了动态、或点赞/评论了某条动态。"
+                    "朋友圈是线上社交，不受上面【当面场景规则】的限制——即使当面在一起也能刷、能评。"
+                    "你可以让相关角色用 post_moment(角色, 正文) 发动态、comment_moment(编号, 角色, 内容) 评论、"
+                    "like_moment(编号, 角色) 点赞来回应；角色之间也可以互相评论、接话。"
+                    "如果是回复动态下某个人的评论（而不是评论动态本身），在 comment_moment 里加 reply_to=被回复者的名字"
+                    "（回复玩家就填「玩家」），会显示成「谁 回复 谁」。"
+                    "由你自主决定谁回应、回几条、是否回应——不感兴趣的角色可以完全不理。"
+                    "引用某条动态时用它的 #编号。本轮除这些工具调用外，不要输出任何 dialog 台词。"
+                )
+                if _moment_lines:
+                    msg += (" 当前朋友圈近况（供参考，不必每轮都发动态；仅在剧情合适时才用 post_moment）："
+                            + "；".join(_moment_lines) + "。")
+            except Exception:
+                pass
+        # ── Browser (浏览器) protocol — only when the player searched this turn ──
+        if _use_browser:
             msg += (
-                " [群聊] 当用户消息以[群聊]开头时，玩家正在某个群聊里发言。"
-                "群聊是线上聊天，不受上面【当面场景规则】里「当面禁止打电话/视频」的限制——"
-                "即使角色此刻和玩家当面在一起，也可以同时在群里打字发言。"
-                "群聊回复必须使用 send_group_sms(群名, 角色名, 消息) 工具，绝不要输出普通角色对话。"
-                "由你自主决定群里哪些角色回复、每个角色回几条："
-                "有的角色多聊几句、有的只回一句、和当前话题无关的角色可以完全不出现，"
-                "像真实群聊一样错落自然。角色之间也可以互相接话、拌嘴、附和，不必只回复玩家。"
-                "连续多次调用 send_group_sms 即可让不同角色发言或同一角色连发多条。"
-                "本轮除 send_group_sms 工具调用外，不要输出任何 dialog 台词。"
+                " [浏览器] 当用户消息以[浏览器]开头时，玩家在手机浏览器里做了一次搜索。"
+                "此刻你要扮演这个世界的“搜索引擎”，而不是任何角色——调用 browser_result 工具，"
+                "为这次搜索返回 4-6 条结果：query 传搜索词，results 传一个 JSON 数组，"
+                "每项包含 title（标题）、snippet（摘要）、site（来源站点，可选）三个字段。"
+                "结果要具体、有细节、够劲爆吸睛，可结合当前剧情与相关角色制造猛料、八卦或反转，"
+                "勾起玩家继续深挖的欲望。本轮除该工具调用外，不要输出任何台词或旁白。"
             )
-            if _group_lines:
-                msg += " 当前已存在的群聊：" + "；".join(_group_lines) + "。"
-            msg += (
-                " 若剧情中出现「把玩家拉进群」「角色们新建了一个群」等情节，"
-                "先调用 create_group(群名, 成员) 工具建群（成员名用、分隔），再让角色在群里发言。"
-                " [群聊成员变动] 群成员和群名可以动态变化，你可以主动演绎："
-                "① add_group_member(群名, 角色, 操作者) 把某角色拉进群——"
-                "注意只有当前群成员能用 send_group_sms 发言，要让新人在群里说话必须先拉进群；"
-                "② remove_group_member(群名, 角色, 操作者) 把某角色踢出群；"
-                "③ leave_group(群名, 角色) 让某角色主动退群；"
-                "④ rename_group(群名, 新群名, 操作者) 改群名。"
-                "（操作者=执行该动作的角色名，可留空。）"
-                "这些变动系统会自动记录、并在下一轮提示相关角色反应，你不必在同一轮硬凑反应——"
-                "如何反应、由谁反应、是否反应，全部根据角色性格与剧情自主演绎。"
-            )
-        except Exception:
-            pass
-        # ── Moments (朋友圈) protocol (dynamic: read recent posts) ──
-        try:
-            _wm = get_phone_widget()
-            _moment_lines: list[str] = []
-            _posts = []
-            if _wm is not None and hasattr(_wm, "_moments_store"):
-                _posts = _wm._moments_store.get_posts()[-6:]
-            elif _wm is None:  # React mode: read moments from phone_core (Qt-free)
-                from plugins.shinsekai_chat_phone import phone_core
-                _posts = phone_core.moment_get_posts()[-6:]
-            for _p in _posts:
-                _who = "我" if _p.get("author") == "__player__" else _p.get("author", "")
-                _body = (_p.get("text", "") or "").replace("\n", " ")[:30]
-                _img = "[图]" if (_p.get("image") or _p.get("image_desc")) else ""
-                _nl = len(_p.get("likes", [])); _nc = len(_p.get("comments", []))
-                _cm = ""
-                if _p.get("comments"):
-                    _last = _p["comments"][-1]
-                    _cw = "我" if _last.get("is_user") else _last.get("author", "")
-                    _cm = f" 最近评论 {_cw}：{(_last.get('text', '') or '')[:16]}"
-                _moment_lines.append(
-                    f"#{_p.get('id')} [{_who}]“{_body}”{_img}（赞{_nl} 评{_nc}）{_cm}")
-            msg += (
-                " [朋友圈] 当用户消息以[朋友圈]开头时，玩家在朋友圈发了动态、或点赞/评论了某条动态。"
-                "朋友圈是线上社交，不受上面【当面场景规则】的限制——即使当面在一起也能刷、能评。"
-                "你可以让相关角色用 post_moment(角色, 正文) 发动态、comment_moment(编号, 角色, 内容) 评论、"
-                "like_moment(编号, 角色) 点赞来回应；角色之间也可以互相评论、接话。"
-                "如果是回复动态下某个人的评论（而不是评论动态本身），在 comment_moment 里加 reply_to=被回复者的名字"
-                "（回复玩家就填「玩家」），会显示成「谁 回复 谁」。"
-                "由你自主决定谁回应、回几条、是否回应——不感兴趣的角色可以完全不理。"
-                "引用某条动态时用它的 #编号。本轮除这些工具调用外，不要输出任何 dialog 台词。"
-            )
-            if _moment_lines:
-                msg += (" 当前朋友圈近况（供参考，不必每轮都发动态；仅在剧情合适时才用 post_moment）："
-                        + "；".join(_moment_lines) + "。")
-        except Exception:
-            pass
-        # ── Browser (浏览器) protocol ──
-        msg += (
-            " [浏览器] 当用户消息以[浏览器]开头时，玩家在手机浏览器里做了一次搜索。"
-            "此刻你要扮演这个世界的“搜索引擎”，而不是任何角色——调用 browser_result 工具，"
-            "为这次搜索返回 4-6 条结果：query 传搜索词，results 传一个 JSON 数组，"
-            "每项包含 title（标题）、snippet（摘要）、site（来源站点，可选）三个字段。"
-            "结果要具体、有细节、够劲爆吸睛，可结合当前剧情与相关角色制造猛料、八卦或反转，"
-            "勾起玩家继续深挖的欲望。本轮除该工具调用外，不要输出任何台词或旁白。"
-        )
         # ── Recording (录音) awareness — player may be recording your voice ──
         try:
             _rf = Path("data/plugins/com.shinsekai.chat_phone/recording.json")

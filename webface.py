@@ -274,56 +274,14 @@ def _moment_like(post_id: Any) -> dict[str, Any]:
     return {"ok": bool(ok)}
 
 
-def _resolve_bridge_state():
-    """Reach the live BridgeState without re-importing the bridge module.
-
-    The bridge runs either as ``__main__`` (python frontend_bridge.py) or as an
-    imported module (webui_react.py). ``import frontend_bridge`` would create a
-    second module instance with a fresh (None) state, so instead we look it up in
-    ``sys.modules`` and take the first that actually holds a state.
-    """
-    import sys
-    for key in ("frontend_bridge", "webui_react", "__main__"):
-        mod = sys.modules.get(key)
-        getter = getattr(mod, "get_bridge_state", None) if mod is not None else None
-        if getter is None:
-            continue
-        try:
-            st = getter()
-        except Exception:
-            st = None
-        if st is not None:
-            return st
-    return None
-
-
-def _send_runtime_command(command: dict) -> bool:
-    """Send a raw command to the live chat runtime over the chat stream (best-effort).
-    Used for send-message turn injection and for skip-speech (the call-hangup interrupt)."""
-    try:
-        state = _resolve_bridge_state()
-        if state is None:
-            return False
-        cs = getattr(state, "chat_stream", None)
-        sess = getattr(state, "chat_session", None) or {}
-        sid = str((sess.get("sessionId") if isinstance(sess, dict) else "") or "").strip()
-        if cs is None or not sid:
-            return False
-        import uuid
-        command = dict(command)
-        command.setdefault("cmdId", uuid.uuid4().hex)
-        return bool(cs.send_command(sid, command))
-    except Exception:
-        logger.debug("phone runtime command failed", exc_info=True)
-        return False
-
-
 def _trigger_runtime_turn(text: str, *, hidden: bool = True) -> bool:
-    """Inject a user turn (send-message) to the live runtime — calls the stream service
-    directly so the private [短信]/[群聊]/[通话] trigger doesn't flash as a stage bubble."""
-    return _send_runtime_command({"type": "send-message", "payload": {
-        "text": text, "attachments": [], "hidden": hidden,
-    }})
+    """Submit a phone turn through the host's public plugin input controller."""
+    try:
+        from plugins.shinsekai_chat_phone.plugin import submit_runtime_text
+        return submit_runtime_text(text)
+    except Exception:
+        logger.debug("phone runtime trigger failed", exc_info=True)
+        return False
 
 
 def _trigger_runtime_turn_with_retry(text: str, *, hidden: bool = True) -> bool:
@@ -405,7 +363,6 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt:
             logged = phone_core.log_call(name, max(int(duration or 0), 1), ctype, call_id)
         except Exception:
             logger.debug("call log failed", exc_info=True)
-    _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
     reaction_queued = True
     if name:
         reaction_queued = _trigger_runtime_turn_with_retry(
@@ -651,15 +608,11 @@ def _browser_search(query: str) -> dict[str, Any]:
         phone_core.add_browser_history(query)
     except Exception:
         pass
-    try:
-        import threading
-        runtime_text = (f'[浏览器] 玩家在浏览器里搜索了：“{query}”。'
-                        f'请你此刻作为这个世界的搜索引擎（不是角色本人），调用 browser_result 工具，'
-                        f'为这次搜索生成 4-6 条具体、劲爆、吸睛的搜索结果；只调用工具，不要输出对话或旁白。')
-        threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
-                         daemon=True, name="phone-browser-trigger").start()
-    except Exception:
-        pass
+    runtime_text = (f'[浏览器] 玩家在浏览器里搜索了：“{query}”。'
+                    f'请你此刻作为这个世界的搜索引擎（不是角色本人），调用 browser_result 工具，'
+                    f'为这次搜索生成 4-6 条具体、劲爆、吸睛的搜索结果；只调用工具，不要输出对话或旁白。')
+    if not _trigger_runtime_turn(runtime_text):
+        return {"ok": False, "error": "runtime_unavailable"}
     return {"ok": True}
 
 
@@ -675,7 +628,9 @@ def _settings() -> dict[str, Any]:
         level = 1 if scale <= 0.6 else 3 if scale >= 1.8 else 2
     return {
         "player": str(prefs.get("player_name") or _player_name()),
-        "signature": str(prefs.get("signature", "") or ""),
+        "signature": str(
+            prefs.get("player_signature", prefs.get("signature", "")) or ""
+        ),
         "theme": str(prefs.get("theme", "pink") or "pink"),
         "dnd": bool(sess.get("dnd", False)),
         "proactiveLevel": level,
@@ -1174,7 +1129,10 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "avatars":
             return {"avatars": _avatars()}
         if cmd == "set_profile":
-            _write_prefs({"player_name": (str(args.get("name", "")).strip() or "我"), "signature": str(args.get("signature", "") or "")})
+            _write_prefs({
+                "player_name": (str(args.get("name", "")).strip() or "我"),
+                "player_signature": str(args.get("signature", "") or ""),
+            })
             return {"ok": True}
         if cmd == "set_player_avatar":
             _write_prefs({"player_avatar": str(args.get("data", "") or "")})

@@ -1,0 +1,8 @@
+{
+  "display_name": "doki_chat",
+  "desc": "手机组件：短信、通话、联系人。",
+  "author": "pipi_",
+  "repo": "https://github.com/Mizushima-Mihane/Shinsekai-chat-phone",
+  "lowest_shinsekai_version": ">=2.3.0",
+  "tags": ["chat", "phone"]
+}

@@ -20,6 +20,7 @@ logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
 _monitor: object | None = None
 _frontend_ui: object | None = None
+_frontend_user_input: object | None = None
 _pending_incoming_caller = ""
 _pending_incoming_lock = threading.Lock()
 
@@ -39,9 +40,10 @@ def set_monitor(m: object) -> None:
 
 
 def clear_refs() -> None:
-    global _monitor, _frontend_ui, _pending_incoming_caller
+    global _monitor, _frontend_ui, _frontend_user_input, _pending_incoming_caller
     _monitor = None
     _frontend_ui = None
+    _frontend_user_input = None
     with _pending_incoming_lock:
         _pending_incoming_caller = ""
 
@@ -61,6 +63,27 @@ def clear_pending_incoming_call(name: str = "") -> None:
 def set_frontend_ui(controller: object | None) -> None:
     global _frontend_ui
     _frontend_ui = controller
+
+
+def set_frontend_user_input(controller: object | None) -> None:
+    global _frontend_user_input
+    _frontend_user_input = controller
+
+
+def submit_runtime_text(text: str) -> bool:
+    """Submit a phone-generated turn through the host's public plugin API."""
+    value = str(text or "").strip()
+    controller = _frontend_user_input
+    if not value or controller is None:
+        return False
+    try:
+        controller.submit_text(value)
+        return True
+    except RuntimeError:
+        logger.debug("phone runtime input skipped; no active chat runtime")
+    except Exception:
+        logger.exception("phone runtime input failed")
+    return False
 
 
 def _emit_call_event(event: dict) -> None:
@@ -1467,7 +1490,7 @@ class ChatPhonePlugin(PluginBase):
     @property
     def plugin_version(self) -> str: return "2.0.0"
     @property
-    def plugin_name(self) -> str: return "doki_chat"
+    def plugin_name(self) -> str: return "Doki Chat"
     @property
     def plugin_description(self) -> str: return "手机组件：短信、通话、联系人。"
     @property
@@ -1607,31 +1630,40 @@ class ChatPhonePlugin(PluginBase):
                 logger.debug("runtime frontend page presentation is unavailable")
             except Exception:
                 logger.exception("Failed to bind runtime phone page presentation")
+            try:
+                set_frontend_user_input(register.frontend_user_input())
+            except AttributeError:
+                logger.debug("runtime frontend user input is unavailable")
+            except Exception:
+                logger.exception("Failed to bind runtime phone input")
             # Toolbar entry (host: codex chat-UI slots) — a phone button in the top
             # stage toolbar that pops the phone page as a floating overlay. Guarded:
             # hosts without register_frontend_chat_ui simply skip it.
             try:
                 from sdk.types import FrontendChatUIContribution
-                from plugins.shinsekai_chat_phone.phone_settings import load_settings
                 if hasattr(register, "register_frontend_chat_ui"):
-                    _phone_prefs = load_settings()
+                    fields = getattr(FrontendChatUIContribution, "__dataclass_fields__", {})
+                    overlay_options = {
+                        "overlay_width": 400,
+                        "overlay_height": 860,
+                        "overlay_background": "#ebe6ee",
+                    }
+                    if "overlay_initial_mini" in fields:
+                        from plugins.shinsekai_chat_phone.phone_settings import load_settings
+                        overlay_options["overlay_initial_mini"] = (
+                            str(load_settings().get("phone_size", "normal")) == "mini"
+                        )
+                    contribution_options = {
+                        key: value for key, value in overlay_options.items() if key in fields
+                    }
                     register.register_frontend_chat_ui(FrontendChatUIContribution(
                         contribution_id="open_phone",
                         slot="chat-top-toolbar",
                         title="手机",
                         icon="smartphone",
                         action={"type": "open-plugin-page", "page_id": "chat_phone_app", "mode": "overlay"},
-                        # Overlay window shape: a tall, narrow phone silhouette.
-                        # Host clamps to width[240,640] / height[320,960]. The
-                        # background is only the pre-load placeholder — it matches
-                        # the phone's default pink theme (--bg) so the first paint
-                        # is seamless; the phone then streams its live theme color
-                        # and the host recolors the shell + drag bar to follow it.
-                        overlay_width=400,
-                        overlay_height=860,
-                        overlay_background="#ebe6ee",
-                        overlay_initial_mini=str(_phone_prefs.get("phone_size", "normal")) == "mini",
                         order=40.0,
+                        **contribution_options,
                     ))
             except Exception:
                 logger.debug("chat-UI toolbar slot unavailable; skipping phone toolbar entry", exc_info=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+import threading
 from pathlib import Path
 
 from sdk.chat_ui_context import ChatUIContext
@@ -21,6 +22,14 @@ logger = get_logger(__name__, plugin_id="com.shinsekai.chat_phone")
 
 _phone_widget: object | None = None
 _monitor: object | None = None
+_frontend_ui: object | None = None
+_pending_incoming_caller = ""
+_pending_incoming_lock = threading.Lock()
+
+# Host page presentation: the registered phone page + a stable presentation id so
+# an incoming call pops (present) and a hang-up dismisses the same overlay.
+_FRONTEND_PAGE_ID = "chat_phone_app"
+_INCOMING_CALL_PRESENTATION_ID = "chat-phone.incoming-call"
 
 
 def get_phone_widget() -> object | None:
@@ -42,19 +51,83 @@ def set_monitor(m: object) -> None:
 
 
 def clear_refs() -> None:
-    global _phone_widget, _monitor
+    global _phone_widget, _monitor, _frontend_ui, _pending_incoming_caller
     _phone_widget = None
     _monitor = None
+    _frontend_ui = None
+    with _pending_incoming_lock:
+        _pending_incoming_caller = ""
+
+
+def get_pending_incoming_caller() -> str:
+    with _pending_incoming_lock:
+        return _pending_incoming_caller
+
+
+def clear_pending_incoming_call(name: str = "") -> None:
+    global _pending_incoming_caller
+    with _pending_incoming_lock:
+        if not name or _pending_incoming_caller == name:
+            _pending_incoming_caller = ""
+
+
+def set_frontend_ui(controller: object | None) -> None:
+    global _frontend_ui
+    _frontend_ui = controller
 
 
 def _emit_call_event(event: dict) -> None:
-    """Push a call.incoming / call.ended stream event to the React frontend.
+    """Present or dismiss the phone page through the host's generic page channel.
 
-    The CALL marker is detected here (runtime), but the stream sink lives in main.py.
-    Reach it via a module accessor without importing (main.py runs as __main__) — the
-    runtime-side twin of the bridge's get_bridge_state. No-op if unavailable (Qt mode,
-    or host without the accessor).
+    Incoming calls now surface via the host's feature-neutral plugin-page
+    presentation API (present_page / dismiss_page, wired by main-repo PR 241):
+    call.incoming pops the phone overlay with the caller payload, call.ended
+    dismisses the same presentation. The original stream-sink emit is kept as a
+    compatibility fallback for hosts without the runtime frontend_ui controller
+    (legacy Qt mode, or a host predating PR 241).
     """
+    event_type = str(event.get("type") or "").strip()
+    if event_type == "call.incoming":
+        caller = str(event.get("name") or "").strip()
+        if caller:
+            global _pending_incoming_caller
+            with _pending_incoming_lock:
+                _pending_incoming_caller = caller
+    elif event_type == "call.ended":
+        clear_pending_incoming_call()
+    controller = _frontend_ui
+    if controller is not None:
+        try:
+            if event_type == "call.incoming":
+                caller = str(event.get("name") or "").strip()
+                controller.present_page(
+                    _FRONTEND_PAGE_ID,
+                    presentation_id=_INCOMING_CALL_PRESENTATION_ID,
+                    payload={
+                        "view": "incoming-call",
+                        "caller": caller,
+                        "callType": (
+                            "video"
+                            if str(event.get("callType") or "").lower() == "video"
+                            else "voice"
+                        ),
+                    },
+                )
+                logger.info("phone: presented incoming-call overlay for %r", caller)
+                return
+            if event_type == "call.ended":
+                controller.dismiss_page(_INCOMING_CALL_PRESENTATION_ID)
+                logger.info("phone: dismissed incoming-call overlay")
+                return
+        except RuntimeError:
+            # No active React Chat stream (e.g. legacy Qt mode) — fall back below.
+            logger.info("phone: present skipped, no active React stream; using stream-sink fallback")
+        except Exception:
+            logger.exception("generic phone page event failed")
+    elif event_type in ("call.incoming", "call.ended"):
+        logger.info("phone: no frontend_ui controller bound; using stream-sink fallback (backend not restarted?)")
+
+    # Compatibility fallback for hosts that implemented the original phone events.
     try:
         import sys
         for key in ("__main__", "main"):
@@ -786,6 +859,17 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
     narration_parts: list[str] = []
     spoke_chars: set[str] = set()
     mon = get_monitor()
+    pending_callers = {get_pending_incoming_caller()} - {""}
+    # A CALL marker can appear after an eager line from the same character in one
+    # model response. Treat the whole response as ringing, so that line cannot
+    # leak onto the stage before the player answers.
+    for pending_item in items:
+        if not isinstance(pending_item, dict):
+            continue
+        if str(pending_item.get("character_name", "") or "").strip() == "CALL":
+            pending_caller = str(pending_item.get("speech", "") or "").split(":")[0].split("：")[0].strip()
+            if pending_caller:
+                pending_callers.add(pending_caller)
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -848,6 +932,8 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
                     except Exception:
                         logger.debug("react group reply capture failed", exc_info=True)
             continue   # moment/browser 走各自工具，这里只需从舞台 strip
+        if name in pending_callers:
+            continue
         # regular character dialogue -> face-to-face tracking + yandere tamper scan
         spoke_chars.add(name)
         if mon is not None:
@@ -875,11 +961,8 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
     if narration_parts:
         _recover_stranger_sms(char_settings, narration_parts, spoke_chars,
                               lambda s, m: phone_core.deliver_sms(s, m, known=False))
-        # character hung up (narrated) -> end the call in the frontend UI
-        _narr_hangup = " ".join(narration_parts)
-        if any(k in _narr_hangup for k in ("挂断了电话", "挂掉了电话", "挂断了通话", "结束了通话",
-                                           "啪地挂断", "主动挂断", "先一步挂", "生气地挂")):
-            _emit_call_event({"type": "call.ended"})
+        # Stage narration is dialogue, not a phone-control protocol. A call ends
+        # only when the player uses the explicit hang-up action in the phone UI.
 
     # Strip COT + PHONE + CALL from the stored dialog to save tokens / keep them off stage.
     if isinstance(data, dict) and "dialog" in data:
@@ -893,7 +976,7 @@ def _on_message_added_react(ctx, char_settings: dict) -> None:
         else:
             data["dialog"] = [
                 it for it in data["dialog"]
-                if str(it.get("character_name", "")).strip() not in ("COT", "PHONE", "CALL")
+                if str(it.get("character_name", "")).strip() not in ({"COT", "PHONE", "CALL"} | pending_callers)
             ]
         if len(data["dialog"]) != original_len or phone_items:
             prefix = ""
@@ -1667,7 +1750,7 @@ def _on_init_chat(ctx, char_settings: dict) -> None:
         if get_monitor() is not None:
             return
         from plugins.shinsekai_chat_phone.proactive_core import ProactiveCore
-        m = ProactiveCore()
+        m = ProactiveCore(on_incoming_call=_emit_call_event)
         m.set_character_settings(char_settings)
         try:
             fp = Path("data/plugins/com.shinsekai.chat_phone/freq_config.json")
@@ -1869,18 +1952,39 @@ class ChatPhonePlugin(PluginBase):
                 actions=[FrontendConfigAction(id="rpc", label="rpc", run=webface.rpc)],
                 order=40.0,
             ))
+            # Runtime page presentation: hand the plugin the host's frontend_ui
+            # controller so an incoming call can pop the phone overlay through the
+            # generic plugin-page channel. Guarded: hosts without it just skip.
+            try:
+                set_frontend_ui(register.frontend_ui())
+            except AttributeError:
+                logger.debug("runtime frontend page presentation is unavailable")
+            except Exception:
+                logger.exception("Failed to bind runtime phone page presentation")
             # Toolbar entry (host: codex chat-UI slots) — a phone button in the top
             # stage toolbar that pops the phone page as a floating overlay. Guarded:
             # hosts without register_frontend_chat_ui simply skip it.
             try:
                 from sdk.types import FrontendChatUIContribution
+                from plugins.shinsekai_chat_phone.settings_app import load_settings
                 if hasattr(register, "register_frontend_chat_ui"):
+                    _phone_prefs = load_settings()
                     register.register_frontend_chat_ui(FrontendChatUIContribution(
                         contribution_id="open_phone",
                         slot="chat-top-toolbar",
                         title="手机",
                         icon="smartphone",
                         action={"type": "open-plugin-page", "page_id": "chat_phone_app", "mode": "overlay"},
+                        # Overlay window shape: a tall, narrow phone silhouette.
+                        # Host clamps to width[240,640] / height[320,960]. The
+                        # background is only the pre-load placeholder — it matches
+                        # the phone's default pink theme (--bg) so the first paint
+                        # is seamless; the phone then streams its live theme color
+                        # and the host recolors the shell + drag bar to follow it.
+                        overlay_width=400,
+                        overlay_height=860,
+                        overlay_background="#ebe6ee",
+                        overlay_initial_mini=str(_phone_prefs.get("phone_size", "normal")) == "mini",
                         order=40.0,
                     ))
             except Exception:

@@ -107,7 +107,7 @@ class ProactiveCore:
     _SCENE_BACKSTOP_SEC = 7200  # 2h safety backstop (scene is a state, not a timer)
     _MOMENT_K = 0.03            # moments damping (matches ProactiveMonitor)
 
-    def __init__(self) -> None:
+    def __init__(self, on_incoming_call=None) -> None:
         self._char_settings: dict[str, str] = {}
         self._freq_config: dict = {}
         self._scene_chars: dict[str, float] = {}
@@ -117,6 +117,7 @@ class ProactiveCore:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._on_incoming_call = on_incoming_call
 
     # ── config ────────────────────────────────────────────────────────
     def set_character_settings(self, settings: dict) -> None:
@@ -198,12 +199,26 @@ class ProactiveCore:
         return enabled, scale, dnd
 
     def _emit_call(self, name: str, video: bool) -> bool:
-        """Emit a call.incoming stream event so the phone rings (like a story CALL marker)."""
+        """Present an incoming call through the plugin's generic host-page bridge.
+
+        Prefers the injected on_incoming_call callback (routes to the host's
+        plugin-page presentation channel, so the phone overlay pops); falls back
+        to the legacy stream-sink emit for hosts without it.
+        """
+        event = {"type": "call.incoming", "name": name,
+                 "callType": ("video" if video else "voice"),
+                 "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"}
+        callback = self._on_incoming_call
+        if callback is not None:
+            try:
+                callback(event)
+                return True
+            except Exception:
+                logger.debug("proactive call callback failed", exc_info=True)
+
+        # Compatibility fallback for older hosts with the original call event.
         try:
             import sys
-            event = {"type": "call.incoming", "name": name,
-                     "callType": ("video" if video else "voice"),
-                     "pluginId": "com.shinsekai.chat_phone", "pageId": "chat_phone_app"}
             for key in ("__main__", "main"):
                 mod = sys.modules.get(key)
                 getter = getattr(mod, "get_stream_sink", None) if mod is not None else None

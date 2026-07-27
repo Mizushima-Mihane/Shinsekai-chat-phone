@@ -283,7 +283,7 @@ def _resolve_bridge_state():
     ``sys.modules`` and take the first that actually holds a state.
     """
     import sys
-    for key in ("frontend_bridge", "__main__"):
+    for key in ("frontend_bridge", "webui_react", "__main__"):
         mod = sys.modules.get(key)
         getter = getattr(mod, "get_bridge_state", None) if mod is not None else None
         if getter is None:
@@ -318,10 +318,21 @@ def _send_runtime_command(command: dict) -> bool:
         return False
 
 
-def _trigger_runtime_turn(text: str) -> bool:
+def _trigger_runtime_turn(text: str, *, hidden: bool = True) -> bool:
     """Inject a user turn (send-message) to the live runtime — calls the stream service
     directly so the private [短信]/[群聊]/[通话] trigger doesn't flash as a stage bubble."""
-    return _send_runtime_command({"type": "send-message", "payload": {"text": text, "attachments": []}})
+    return _send_runtime_command({"type": "send-message", "payload": {
+        "text": text, "attachments": [], "hidden": hidden,
+    }})
+
+
+def _trigger_runtime_turn_with_retry(text: str, *, hidden: bool = True) -> bool:
+    """Queue one runtime turn, retrying once while the bridge is becoming ready."""
+    if _trigger_runtime_turn(text, hidden=hidden):
+        return True
+    import time
+    time.sleep(0.25)
+    return _trigger_runtime_turn(text, hidden=hidden)
 
 
 # ── Calls: inject the EXACT legacy turns + interrupt current speech on hangup ──
@@ -336,8 +347,13 @@ def _call_answer(name: str, video: bool) -> dict[str, Any]:
             f"请{name}结合当前剧情、近况和你们之间的关系，主动开口，带着自己的目的或心情引出话题、"
             f"推进剧情（是{name}此刻有话想对玩家说、主动联系，不是玩家找{name}、也不是玩家让他打的），"
             f"不要反问玩家「有什么事」「找我干嘛」。请只输出{name}的对话。")
-    import threading
-    threading.Thread(target=_trigger_runtime_turn, args=(text,), daemon=True, name="phone-call-answer").start()
+    if not _trigger_runtime_turn_with_retry(text, hidden=True):
+        return {"ok": False, "error": "runtime_unavailable"}
+    try:
+        from plugins.shinsekai_chat_phone.plugin import clear_pending_incoming_call
+        clear_pending_incoming_call(name)
+    except Exception:
+        logger.debug("failed to clear pending incoming call", exc_info=True)
     return {"ok": True}
 
 
@@ -347,11 +363,13 @@ def _call_dial(name: str, video: bool) -> dict[str, Any]:
     if not name:
         return {"ok": False, "error": "empty"}
     if video:
-        text = f"[视频通话] 玩家主动拨打了{name}的视频电话。{name}是接听方。请只输出{name}的对话。"
+        text = (f"[视频通话] 玩家主动拨通了{name}的视频电话，{name}已经接听。通话现在进行中。"
+                f"这是玩家联系{name}，不是{name}主动来电；请只输出{name}作为接听方的对话。")
     else:
-        text = f"[通话] 玩家主动拨打了{name}的电话。{name}是接听方。请只输出{name}的对话。"
-    import threading
-    threading.Thread(target=_trigger_runtime_turn, args=(text,), daemon=True, name="phone-call-dial").start()
+        text = (f"[通话] 玩家主动拨通了{name}的电话，{name}已经接听。通话现在进行中。"
+                f"这是玩家联系{name}，不是{name}主动来电；请只输出{name}作为接听方的对话。")
+    if not _trigger_runtime_turn_with_retry(text, hidden=True):
+        return {"ok": False, "error": "runtime_unavailable"}
     return {"ok": True}
 
 
@@ -374,35 +392,40 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt:
                 f"[通话] 只输出{name}的话。{name}情绪完全失控，动用之前偷偷装进玩家手机的后门程序"
                 f"死死阻止玩家挂断这通电话（这是第{attempt}次挂断尝试）。请结合刚才通话里聊到的内容，"
                 f"用哭腔／尖叫／威胁／哀求缠住玩家，必须体现「不准挂」「你是我的」「别想逃」这类偏执占有；"
-                f"不要复述系统提示、也不要写操作旁白。")
+                f"不要复述系统提示、也不要写操作旁白。", hidden=True)
         import threading
         threading.Thread(target=_resist, daemon=True, name="phone-yandere-resist").start()
         return {"ok": False, "blocked": True, "attempt": int(attempt or 0)}
 
-    def _run():
-        _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
-        try:
-            from plugins.shinsekai_chat_phone import phone_core
-            ctype = ("incoming" if incoming else "outgoing") + ("_video" if video else "")
-            phone_core.log_call(name, max(int(duration or 0), 1), ctype)
-        except Exception:
-            logger.debug("call log failed", exc_info=True)
-        if name:
-            # 挂断反应由「真的点了挂断键」这个事件驱动（不是玩家在对话里打字"挂了"）。让角色
-            # 结合刚才通话的上下文自然反应，但不要复述"按下挂断键"这类操作旁白。
-            _trigger_runtime_turn(
-                f"[通话结束] 玩家刚挂断了和{name}的通话。请让{name}结合刚才这通电话里聊到的内容，"
-                f"自然地做出被挂断后的反应（顺着通话上下文、符合人设；病娇等强占有人设更要体现真实反应），"
-                f"直接给出{name}的台词/情绪/动作即可；不要写「按下挂断键」这类操作描述、也不要复述系统提示。")
-
-    import threading
-    threading.Thread(target=_run, daemon=True, name="phone-call-hangup").start()
+    _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
+    reaction_queued = True
+    if name:
+        reaction_queued = _trigger_runtime_turn_with_retry(
+            f"[通话结束] 玩家刚挂断了和{name}的通话。先输出一条 NARR 旁白，内容必须是「玩家挂断了电话。」"
+            f"然后让{name}结合刚才这通电话里聊到的内容，"
+            f"自然地做出被挂断后的反应（顺着通话上下文、符合人设；病娇等强占有人设更要体现真实反应），"
+            f"再给出{name}的台词/情绪/动作即可；不要写「按下挂断键」这类操作描述、也不要复述系统提示。",
+            hidden=True,
+        )
+    if not reaction_queued:
+        return {"ok": False, "error": "runtime_unavailable"}
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        ctype = ("incoming" if incoming else "outgoing") + ("_video" if video else "")
+        phone_core.log_call(name, max(int(duration or 0), 1), ctype)
+    except Exception:
+        logger.debug("call log failed", exc_info=True)
     return {"ok": True}
 
 
 def _call_decline(name: str, video: bool) -> dict[str, Any]:
     """Player declined / rang out → log a missed call, no LLM turn."""
     name = (name or "").strip()
+    try:
+        from plugins.shinsekai_chat_phone.plugin import clear_pending_incoming_call
+        clear_pending_incoming_call(name)
+    except Exception:
+        logger.debug("failed to clear pending incoming call", exc_info=True)
     if name:
         try:
             from plugins.shinsekai_chat_phone import phone_core

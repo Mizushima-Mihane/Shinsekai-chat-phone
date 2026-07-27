@@ -57,6 +57,8 @@
   .app-ic{position:relative;display:grid;place-items:center;width:52px;height:52px;border-radius:16px;
     background:var(--pink);color:var(--accent-2);font-size:24px;
     box-shadow:2px 2px 6px var(--lo),-2px -2px 6px var(--hi);transition:box-shadow .09s ease}
+  .app-ic.phone-app{color:var(--accent-2)}
+  .phone-glyph{width:1em;height:1em;fill:currentColor;display:block}
   .app-ic .dot{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;
     background:var(--accent-2);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;font-style:normal}
 
@@ -90,6 +92,7 @@
   .cg-check{flex:0 0 auto;width:22px;height:22px;display:grid;place-items:center;color:var(--accent-2);font-weight:700;font-size:14px}
   .dial-row{gap:8px}
   .dial-btn{flex:0 0 auto;height:30px;padding:0 14px;border:0;border-radius:15px;background:var(--bubble-out);color:var(--accent-2);font-size:12.5px;font-weight:700;box-shadow:2px 2px 5px var(--lo),-2px -2px 5px var(--hi);cursor:pointer;transition:transform .08s}
+  .dial-btn .phone-glyph{display:inline-block;width:1em;height:1em;margin-right:4px;vertical-align:-.15em}
   .dial-btn:active{transform:scale(.93)}
   .dial-btn.video{background:#dce6ea;color:#4a6b78}
   b.missed,small.missed{color:#c2607a}
@@ -129,6 +132,17 @@
   .qcall:active{transform:scale(.9)}
   /* ── Call screen ── */
   .callscreen{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:space-between;height:100%;padding:58px 24px 46px;background:linear-gradient(180deg,var(--surface),var(--bg))}
+  /* Incoming-call ring: a gentle whole-phone shudder while the incomingCall view is up. */
+  .phone.incoming-ringing{transform-origin:center;animation:gentle-ring 1.8s ease-in-out infinite;will-change:transform}
+  @keyframes gentle-ring{
+    0%,18%,100%{transform:translate3d(0,0,0) rotate(0)}
+    3%{transform:translate3d(-1px,0,0) rotate(-.12deg)}
+    6%{transform:translate3d(1px,0,0) rotate(.12deg)}
+    9%{transform:translate3d(-.75px,0,0) rotate(-.08deg)}
+    12%{transform:translate3d(.75px,0,0) rotate(.08deg)}
+    15%{transform:translate3d(0,0,0) rotate(0)}
+  }
+  @media (prefers-reduced-motion:reduce){.phone.incoming-ringing{animation:none}}
   .yan-float{position:absolute;color:rgba(255,59,48,.9);font-weight:900;pointer-events:none;z-index:30;text-shadow:0 1px 4px rgba(0,0,0,.45);animation:yandrift 1.5s ease-in-out infinite alternate}
   @keyframes yandrift{from{transform:translate(0,0) rotate(-4deg)}to{transform:translate(8px,-12px) rotate(4deg)}}
   .yan-center{left:50%!important;top:44%!important;font-size:30px!important;background:rgba(0,0,0,.72);border-radius:16px;padding:12px 18px;color:#ff3b30;animation:yanpulse .5s ease-in-out infinite alternate}
@@ -140,8 +154,10 @@
   .call-actions{display:flex;gap:60px}
   .call-btn{display:grid;justify-items:center;gap:9px;color:#8a7f96;font-size:12px;background:transparent}
   .call-btn>span{display:grid;place-items:center;width:66px;height:66px;border-radius:50%;font-size:27px;color:#fff;box-shadow:2px 5px 14px rgba(0,0,0,.22);transition:transform .09s ease}
+  .call-btn>span .phone-glyph{width:29px;height:29px}
   .call-btn.accept>span{background:linear-gradient(145deg,#6dc88b,#4aa96d)}
   .call-btn.decline>span{background:linear-gradient(145deg,#e58080,#cc5656)}
+  .call-btn.decline>span .phone-glyph{transform:rotate(135deg)}
   .call-btn:active>span{transform:scale(.93)}
 
   /* ── Thread ── */
@@ -347,10 +363,10 @@
     });
   }
 
-  async function rpc(cmd, args){
+  async function rpc(cmd, args, timeoutMs){
     var url = "/api/plugins/" + encodeURIComponent(PLUGIN) + "/ui/" + encodeURIComponent(PAGE) + "/actions/rpc";
     var ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
-    var to = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, 12000) : null;
+    var to = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, timeoutMs || 12000) : null;
     try {
       var res = await fetch(url, { method:"POST",
         headers:{"Content-Type":"application/json","X-Shinsekai-Bridge-Token":TOKEN},
@@ -366,17 +382,35 @@
   var data = {};
   var avatarsCache = {};   // uploaded avatars (base64) — fetched once, kept out of every load()
   var loaded = false;      // 首个 all() 回来前，列表页显示「加载中」而不是「还没有…」
+  var loadFailed = false;
   function applyTheme(key){
     var k = String(key||"").toLowerCase();
     if(k!=="baby") k = "pink";   // only two themes: 粉 (default :root) + 蓝 (baby)
     document.documentElement.setAttribute("data-theme", k);
-    try { postHost("theme","theme",{theme:k}); } catch(e){}   // 让宿主悬浮壳/底部栏也跟随主题
+    try { localStorage.setItem("dokiphone.theme", k); } catch(e){}   // remember for the next first-paint, so we don't flash the default theme
+    try { postHost("theme","theme",{theme:k, bg:getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()}); } catch(e){}   // 让宿主悬浮壳/底部栏也跟随主题（连当前底色一起发，宿主把壳/栏染成同色）
   }
   async function load(){
-    try { data = await rpc("all"); loaded = true; } catch(e){ data = {}; }
+    var wasLoaded = loaded, lastError = null, loadedNow = false;
+    for(var attempt=0; attempt<3; attempt++){
+      try {
+        var snapshot = await rpc("all", null, 3500);
+        if(!snapshot || snapshot.ok===false) throw new Error((snapshot && snapshot.error) || "数据接口没有返回内容");
+        data = snapshot; loaded = true; loadFailed = false; loadedNow = true;
+        break;
+      } catch(e) {
+        lastError = e;
+        if(attempt<2) await new Promise(function(resolve){ setTimeout(resolve, 350*(attempt+1)); });
+      }
+    }
+    if(!loadedNow){
+      if(!wasLoaded){ data = {}; loaded = true; loadFailed = true; }
+      return false;
+    }
     data.avatars = avatarsCache;                      // reattach cached avatars (all() no longer ships them)
     try { applyTheme(data.settings && data.settings.theme); } catch(e){}
-    try { postHost("size","size",{mini:(data.settings&&data.settings.phoneSize)==="mini"}); } catch(e){}
+    try { var _sz=(data.settings&&data.settings.phoneSize)||"normal"; localStorage.setItem("dokiphone.size", _sz); postHost("size","size",{mini: _sz==="mini"}); } catch(e){}
+    return true;
   }
   async function loadAvatars(){
     try { var a = await rpc("avatars"); if(a && a.avatars){ avatarsCache = a.avatars; data.avatars = avatarsCache; } } catch(e){}
@@ -385,7 +419,16 @@
   function header(title){
     return '<div class="app-head"><button class="hbtn" data-home>‹</button><b>'+esc(title)+'</b><span class="hbtn"></span></div>';
   }
-  function wireBack(){ var b = screen.querySelector("[data-home]"); if(b) b.onclick = go.bind(null, "home", null); }
+  function emptyState(normal){
+    if(!loaded) return '<div class="empty">加载中…</div>';
+    if(loadFailed) return '<div class="empty">数据加载失败。<br><button class="ask-b ok" data-reload>点击重试</button></div>';
+    return normal;
+  }
+  function wireBack(){
+    var b = screen.querySelector("[data-home]"); if(b) b.onclick = go.bind(null, "home", null);
+    var retry = screen.querySelector("[data-reload]");
+    if(retry) retry.onclick = function(){ load().then(fillRender); };
+  }
   function fail(e){ screen.innerHTML = '<div class="empty">加载失败<br><small>'+esc(e && e.message || e)+'</small></div>'; wireBack(); }
 
   // Reusable inline text prompt (webview-safe; replaces window.prompt). Resolves to trimmed value or null.
@@ -488,17 +531,22 @@
       finally { busy = false; if(el && el.classList) el.classList.remove("busy"); }
     };
   }
-  async function render(){ try { await (VIEWS[current.view] || VIEWS.home)(current.arg); } catch(e){ fail(e); } }
+  async function render(){
+    var _ph = document.querySelector(".phone");
+    if(_ph) _ph.classList.toggle("incoming-ringing", current.view==="incomingCall");
+    try { await (VIEWS[current.view] || VIEWS.home)(current.arg); } catch(e){ fail(e); }
+  }
 
   // ── Home ──
   VIEWS.home = async function(){
     var snap = data;
     var unread = (snap.threads||[]).reduce(function(a,t){ return a + (t.unread||0); }, 0);
     var gunread = (snap.groups||[]).reduce(function(a,g){ return a + (g.unread||0); }, 0);
+    var phoneGlyph = '<svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg>';
     var apps = [
       {id:"messages", ic:"✉", name:"短信", badge:unread},
       {id:"groups", ic:"❁", name:"群聊", badge:gunread},
-      {id:"calls", ic:"☎︎", name:"电话"},
+      {id:"calls", ic:phoneGlyph, name:"电话"},
       {id:"contacts", ic:"☺", name:"通讯录"},
       {id:"browser", ic:"◎", name:"浏览器"},
       {id:"music", ic:"♪", name:"音乐"},
@@ -508,7 +556,7 @@
     ];
     screen.innerHTML = '<div class="home-top"><b>Doki</b><small>'+esc(snap.player||"我")+' 的手机</small></div>'+
       '<div class="scroll"><div class="home">'+ apps.map(function(a){
-        return '<button class="app-tile" data-app="'+a.id+'"><span class="app-ic">'+a.ic+
+        return '<button class="app-tile" data-app="'+a.id+'"><span class="app-ic'+(a.id==="calls"?" phone-app":"")+'">'+a.ic+
           (a.badge ? '<i class="dot">'+(a.badge>99?"99+":a.badge)+'</i>' : '')+'</span><span>'+esc(a.name)+'</span></button>';
       }).join("") +'</div></div>';
     screen.querySelectorAll("[data-app]").forEach(function(el){ el.onclick = go.bind(null, el.getAttribute("data-app"), null); });
@@ -523,7 +571,7 @@
           (t.unread ? '<span class="badge">'+t.unread+'</span>' : '')+'</button>';
       }).join("");
       screen.innerHTML = header("短信") + '<div class="scroll">'+
-        (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有短信。</div>' : '<div class="empty">加载中…</div>'))+'</div>';
+        (rows ? '<div class="list">'+rows+'</div>' : emptyState('<div class="empty">还没有短信。</div>'))+'</div>';
       wireBack();
       screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
     }
@@ -664,7 +712,7 @@
       '<div class="add-bar"><input id="add-name" placeholder="输入名字添加联系人" autocomplete="off" maxlength="24">'+
       '<button class="add-go" data-add type="button">添加</button></div>'+
       '<div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">通讯录还是空的。<br><small>上方输入名字添加,或在剧情里交换联系方式。</small></div>' : '<div class="empty">加载中…</div>'))+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : emptyState('<div class="empty">通讯录还是空的。<br><small>上方输入名字添加,或在剧情里交换联系方式。</small></div>'))+'</div>';
     wireBack();
     screen.querySelectorAll("[data-qc]").forEach(function(el){ el.onclick = function(ev){ ev.stopPropagation();
       go("inCall", {name:el.getAttribute("data-qc"), type:"voice", dir:"outgoing"}); }; });
@@ -763,6 +811,7 @@
   // ── Calls ──
   VIEWS.calls = async function(){
     var calls = data.calls || [];
+    var phoneGlyph = '<svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg>';
     var rows = calls.map(function(c){
       var missed = c.type==="missed";
       var label = missed ? "未接来电" : c.type==="outgoing" ? "已拨打" : "已接听";
@@ -770,11 +819,11 @@
       return '<button class="row" data-name="'+esc(c.name)+'">'+avatar(c.name)+
         '<span class="grow"><b'+(missed?' class="missed"':'')+'>'+esc(disp(c.name))+'</b>'+
         '<small'+(missed?' class="missed"':'')+'>'+(c.video?"视频 ":"")+label+dur+'</small></span>'+
-        '<span class="icon-btn call-back'+(missed?" missed":"")+'" data-cb="'+esc(c.name)+'" data-cv="'+(c.video?"1":"")+'">'+(c.video?"📹":"☎")+'</span></button>';
+        '<span class="icon-btn call-back'+(missed?" missed":"")+'" data-cb="'+esc(c.name)+'" data-cv="'+(c.video?"1":"")+'">'+(c.video?"📹":phoneGlyph)+'</span></button>';
     }).join("");
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>电话</b>'+
       '<button class="hbtn" data-dial aria-label="拨号">✆</button></div><div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有通话记录。<br><small>点右上角拨号。</small></div>' : '<div class="empty">加载中…</div>'))+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : emptyState('<div class="empty">还没有通话记录。<br><small>点右上角拨号。</small></div>'))+'</div>';
     wireBack();
     screen.querySelector("[data-dial]").onclick = go.bind(null, "dial", null);
     screen.querySelectorAll(".call-back").forEach(function(el){ el.onclick = function(ev){
@@ -787,9 +836,10 @@
   // ── Dial: pick a contact, choose voice / video ──
   VIEWS.dial = async function(){
     var contacts = (data.contacts||[]).filter(function(n){ return !isUnknown(n); });
+    var phoneGlyph = '<svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg>';
     var rows = contacts.length ? contacts.map(function(n){
       return '<div class="row dial-row">'+avatar(n)+'<span class="grow"><b>'+esc(disp(n))+'</b></span>'+
-        '<button class="dial-btn" data-voice="'+esc(n)+'">语音</button>'+
+        '<button class="dial-btn" data-voice="'+esc(n)+'">'+phoneGlyph+'拨通</button>'+
         '<button class="dial-btn video" data-video="'+esc(n)+'">视频</button></div>';
     }).join("") : '<div class="empty">还没有可拨打的联系人。<br><small>先在剧情里交换联系方式。</small></div>';
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button><b>拨号</b><span class="hbtn"></span></div>'+
@@ -882,7 +932,7 @@
       var cards = (data.moments||[]).map(cardHTML).join("");
       screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>朋友圈</b>'+
         '<button class="hbtn" data-post aria-label="发动态">＋</button></div>'+
-        '<div class="scroll">'+(cards || (loaded ? '<div class="empty">还没有动态。<br><small>点右上角 ＋ 发一条,或等角色更新。</small></div>' : '<div class="empty">加载中…</div>'))+
+        '<div class="scroll">'+(cards || emptyState('<div class="empty">还没有动态。<br><small>点右上角 ＋ 发一条,或等角色更新。</small></div>'))+
         '<div style="height:16px"></div></div>';
       wireBack();
       screen.querySelector("[data-post]").onclick = guard(doPost);
@@ -1008,6 +1058,7 @@
       var sz = el.getAttribute("data-size");
       if(data.settings) data.settings.phoneSize = sz;
       rpc("set_phone_size",{size:sz});
+      try { localStorage.setItem("dokiphone.size", sz); } catch(e){}   // cache for the next first-paint
       postHost("size","size",{mini: sz==="mini"});
     }; });
   };
@@ -1030,7 +1081,7 @@
     }).join("");
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>群聊</b>'+
       '<button class="hbtn" data-newgroup aria-label="建群">＋</button></div><div class="scroll">'+
-      (rows ? '<div class="list">'+rows+'</div>' : (loaded ? '<div class="empty">还没有群聊。<br><small>点右上角 ＋ 建群,或剧情里被拉进群。</small></div>' : '<div class="empty">加载中…</div>'))+'</div>';
+      (rows ? '<div class="list">'+rows+'</div>' : emptyState('<div class="empty">还没有群聊。<br><small>点右上角 ＋ 建群,或剧情里被拉进群。</small></div>'))+'</div>';
     wireBack();
     screen.querySelector("[data-newgroup]").onclick = go.bind(null, "createGroup", null);
     screen.querySelectorAll("[data-g]").forEach(function(el){ el.onclick = go.bind(null, "group", el.getAttribute("data-g")); });
@@ -1191,11 +1242,17 @@
       '<div class="call-name">'+esc(disp(info.name))+'</div>'+
       '<div class="call-sub">'+(info.type==="video"?"视频来电":"语音来电")+'…</div></div>'+
       '<div class="call-actions">'+
-        '<button class="call-btn decline" data-decline><span>✕</span>拒接</button>'+
-        '<button class="call-btn accept" data-accept><span>☎</span>接听</button>'+
+        '<button class="call-btn decline" data-decline><span><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>拒接</button>'+
+        '<button class="call-btn accept" data-accept><span><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>接听</button>'+
       '</div></div>';
-    screen.querySelector("[data-accept]").onclick = function(){
-      rpc("call_answer", {name:info.name, video:info.type==="video"}).catch(function(){});
+    screen.querySelector("[data-accept]").onclick = async function(){
+      var accepted = null;
+      try { accepted = await rpc("call_answer", {name:info.name, video:info.type==="video"}); } catch(e){}
+      if(!accepted || !accepted.ok) {
+        var sub = screen.querySelector(".call-sub");
+        if(sub) sub.textContent = "主舞台连接失败，请再试一次";
+        return;
+      }
       go("inCall", {name:info.name, type:info.type, dir:"incoming"});
     };
     screen.querySelector("[data-decline]").onclick = function(){
@@ -1211,7 +1268,7 @@
     screen.innerHTML = '<div class="callscreen"><div class="call-top"><div class="call-av">'+avatar(info.name)+'</div>'+
       '<div class="call-name">'+esc(disp(info.name))+'</div>'+
       '<div class="call-sub" id="call-timer">通话中 00:00</div></div>'+
-      '<div class="call-actions"><button class="call-btn decline" data-hangup><span>✕</span>挂断</button></div></div>';
+      '<div class="call-actions"><button class="call-btn decline" data-hangup><span><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>挂断</button></div></div>';
     var timer = screen.querySelector("#call-timer");
     var iv = setInterval(function(){
       var s = Math.floor((Date.now()-start)/1000);
@@ -1224,7 +1281,12 @@
       try { r = await rpc("call_hangup", {name:info.name, duration:Math.floor((Date.now()-start)/1000),
         incoming:(info.dir==="incoming"), video:info.type==="video", attempt:hangupAttempts}); } catch(e){}
       if(r && r.blocked){ yandereResist(r.attempt || hangupAttempts); }   // 病娇挂不断：施压、不挂断
-      else { clearInterval(iv); go(preCallView.view, preCallView.arg); }   // 回到拨打前的页面，而不是关掉手机
+      else if(r && r.ok) { clearInterval(iv); go(preCallView.view, preCallView.arg); }
+      else if(timer) {
+        timer.textContent = "主舞台连接失败，请再试一次";
+        timer.style.color = "";
+        timer.style.fontWeight = "";
+      }
     };
     function yandereResist(n){
       if(timer){ timer.textContent = "【挂断尝试 "+n+" 次】"; timer.style.color = "#ff3b30"; timer.style.fontWeight = "700"; }
@@ -1396,6 +1458,15 @@
     }
   }, true);
 
+  // First-paint from cache: apply the last-known size + theme synchronously so the phone
+  // opens at its real size (e.g. mini) and color right away, instead of flashing the big
+  // default shell + default theme while rpc("all") is still fetching the settings.
+  try {
+    var _cachedSize = localStorage.getItem("dokiphone.size");
+    if(_cachedSize){ postHost("size","size",{mini: _cachedSize==="mini"}); }
+    var _cachedTheme = localStorage.getItem("dokiphone.theme");
+    if(_cachedTheme){ applyTheme(_cachedTheme); }
+  } catch(e){}
   // Paint the home grid (or an incoming/outgoing call) instantly; data + avatars fill in after.
   if(CALL.name){ current = { view: (CALL.dir==="outgoing" ? "inCall" : "incomingCall"), arg: CALL }; }
   data.avatars = avatarsCache;
@@ -1410,6 +1481,23 @@
   // host says the character hung up (call.ended) -> close the call screen
   window.addEventListener("message", function(e){
     var d = e.data; if(!d) return;
+    // host presents this page for an incoming call (generic plugin-page channel) -> ring
+    if(e.source===parent && d.__shinsekai==="plugin-page" && d.type==="present"){
+      var p = d.payload || {};
+      if(p.view==="incoming-call"){
+        // A live/ringing call must not be yanked back to the incoming screen by a
+        // re-delivered present: the presentation stays in the host snapshot until
+        // call.ended dismisses it, so any later state update can re-post the same
+        // present. Mirror the fillRender guard above — never disturb a live call.
+        if(current.view==="inCall" || current.view==="incomingCall") return;
+        var caller = String(p.caller || "").trim();
+        if(caller){
+          CALL = {name:caller, type:(p.callType==="video"?"video":"voice"), dir:"incoming"};
+          go("incomingCall", CALL);
+        }
+      }
+      return;
+    }
     if(d.__pluginOverlay==="callEnded" && (current.view==="inCall" || current.view==="incomingCall")){ closePhone(); return; }
     // host 用「隐藏不销毁」模式重新显示手机时通知刷新，后台拉最新数据(界面状态保留)
     if(d.__doki==="phone" && d.type==="show"){ load().then(fillRender); loadAvatars().then(fillRender); }

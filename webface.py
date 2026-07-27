@@ -628,7 +628,9 @@ def _settings() -> dict[str, Any]:
         level = 1 if scale <= 0.6 else 3 if scale >= 1.8 else 2
     return {
         "player": str(prefs.get("player_name") or _player_name()),
-        "signature": str(prefs.get("signature", "") or ""),
+        "signature": str(
+            prefs.get("player_signature", prefs.get("signature", "")) or ""
+        ),
         "theme": str(prefs.get("theme", "pink") or "pink"),
         "dnd": bool(sess.get("dnd", False)),
         "proactiveLevel": level,
@@ -1127,7 +1129,10 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "avatars":
             return {"avatars": _avatars()}
         if cmd == "set_profile":
-            _write_prefs({"player_name": (str(args.get("name", "")).strip() or "我"), "signature": str(args.get("signature", "") or "")})
+            _write_prefs({
+                "player_name": (str(args.get("name", "")).strip() or "我"),
+                "player_signature": str(args.get("signature", "") or ""),
+            })
             return {"ok": True}
         if cmd == "set_player_avatar":
             _write_prefs({"player_avatar": str(args.get("data", "") or "")})

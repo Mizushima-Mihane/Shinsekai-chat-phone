@@ -96,6 +96,11 @@
   .dial-btn:active{transform:scale(.93)}
   .dial-btn.video{background:#dce6ea;color:#4a6b78}
   b.missed,small.missed{color:#c2607a}
+  .call-meta{display:flex;align-items:center;gap:5px}
+  .call-arrow{font-size:15px;font-weight:800;line-height:1}
+  .call-arrow.outgoing{color:#4aad70}
+  .call-arrow.incoming{color:#4aad70}
+  .call-arrow.missed{color:#d85c67}
   .call-back{cursor:pointer;transition:transform .08s}
   .call-back:active{transform:scale(.9)}
   .call-back.missed{color:#c2607a}
@@ -157,7 +162,7 @@
   .call-btn>span .phone-glyph{width:29px;height:29px}
   .call-btn.accept>span{background:linear-gradient(145deg,#6dc88b,#4aa96d)}
   .call-btn.decline>span{background:linear-gradient(145deg,#e58080,#cc5656)}
-  .call-btn.decline>span .phone-glyph{transform:rotate(135deg)}
+  .call-btn.decline>span .call-emoji{font-style:normal;font-size:29px;line-height:1;filter:grayscale(1) brightness(0) invert(1)}
   .call-btn:active>span{transform:scale(.93)}
 
   /* ── Thread ── */
@@ -223,7 +228,8 @@
   .aff-bar{flex:1;height:9px;border-radius:6px;background:var(--bubble-out);overflow:hidden}
   .aff-fill{height:100%;border-radius:6px;background:var(--accent-2);transition:width .3s}
   .aff-val{flex:0 0 auto;font-size:13px;font-weight:700;color:var(--accent-2);min-width:26px;text-align:right}
-  .cf-slider{display:flex;align-items:center;gap:12px;margin:8px 2px 4px}
+  .cf-slider{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:8px 2px 10px}
+  .cf-slider>.set-sub{flex:0 0 100%;margin:0}
   .cf-slider input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:4px;background:var(--bubble-out);outline:0}
   .cf-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent-2);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}
   .cf-val{flex:0 0 auto;font-size:12.5px;color:var(--soft);white-space:nowrap}
@@ -589,9 +595,9 @@
   };
 
   VIEWS.thread = async function(name){
-    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button>'+avatar(name,true)+
+    screen.innerHTML = '<div class="app-head"><button class="hbtn" data-back>‹</button>'+
       '<b style="margin-left:6px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(disp(name))+'</b>'+
-      '<button class="hbtn" data-call aria-label="呼叫">☎</button>'+
+      '<button class="hbtn" data-call aria-label="呼叫"><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></button>'+
       '<button class="hbtn" data-charset aria-label="角色设置">⚙</button></div>'+
       '<div class="scroll msgs" id="msgs"></div>'+
       '<form class="composer" id="cf"><button class="cplus" type="button" data-plus aria-label="更多">＋</button>'+
@@ -705,7 +711,7 @@
     var rows = (snap.contacts||[]).map(function(n){
       return '<button class="row" data-name="'+esc(n)+'">'+avatar(n)+
         '<span class="grow"><b>'+esc(disp(n))+'</b><small>'+(isUnknown(n)?"未知联系人":"发消息")+'</small></span>'+
-        '<span class="icon-btn qcall" data-qc="'+esc(n)+'" aria-label="呼叫">☎</span>'+
+        '<span class="icon-btn qcall" data-qc="'+esc(n)+'" aria-label="呼叫"><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>'+
         '<span class="icon-btn">✉</span></button>';
     }).join("");
     screen.innerHTML = header("通讯录") +
@@ -736,9 +742,9 @@
   // ── Character settings (per-contact avatar) ──
   VIEWS.charSettings = async function(name){
     var cur = (data.avatars||{})[name];
-    var lvl = 2, manual = false, aff = 20;
+    var smsLvl = 2, callLvl = 1, manual = false, aff = 20;
     try { var _cf = await rpc("char_freq",{name:name});
-      if(_cf){ if(_cf.level!=null) lvl = _cf.level; manual = !!_cf.manual; if(_cf.affinity!=null) aff = _cf.affinity; }
+      if(_cf){ if(_cf.sms!=null) smsLvl = _cf.sms; else if(_cf.level!=null) smsLvl = _cf.level; if(_cf.call!=null) callLvl = _cf.call; manual = !!_cf.manual; if(_cf.affinity!=null) aff = _cf.affinity; }
     } catch(e){}
     var big = cur
       ? '<span class="av lg img" style="background-image:url(\''+cur+'\')"></span>'
@@ -762,9 +768,11 @@
           '<button class="mode-opt'+(manual?"":" on")+'" data-mode="auto" type="button">自主频率</button>'+
           '<button class="mode-opt'+(manual?" on":"")+'" data-mode="manual" type="button">手动调节</button></div>'+
         (manual
-          ? '<div class="cf-slider"><input id="cf-range" type="range" min="1" max="10" step="1" value="'+Math.max(1,Math.min(10,lvl||2))+'">'+
-              '<div class="cf-val">每小时 <b id="cf-num">'+Math.max(1,Math.min(10,lvl||2))+'</b> 次</div></div>'+
-            '<div class="set-sub">手动指定 '+esc(disp(name))+' 每小时主动联系你的次数（每个存档单独保存）。</div>'
+          ? '<div class="cf-slider"><div class="set-sub">短信频率</div><input id="cf-sms-range" type="range" min="1" max="10" step="1" value="'+Math.max(1,Math.min(10,smsLvl||2))+'">'+
+              '<div class="cf-val">每小时 <b id="cf-sms-num">'+Math.max(1,Math.min(10,smsLvl||2))+'</b> 次</div></div>'+
+            '<div class="cf-slider"><div class="set-sub">来电频率</div><input id="cf-call-range" type="range" min="1" max="10" step="1" value="'+Math.max(1,Math.min(10,callLvl||1))+'">'+
+              '<div class="cf-val">每小时 <b id="cf-call-num">'+Math.max(1,Math.min(10,callLvl||1))+'</b> 次</div></div>'+
+            '<div class="set-sub">手动模式完全不受好感度影响；短信和来电频率分别保存到当前存档。</div>'
           : '<div class="set-sub">自主模式：频率随你俩的好感度自动调节——好感越高越主动，刚认识时会很克制。</div>')+
         '</div>'+
       '</div>';
@@ -791,35 +799,51 @@
       if(m === "manual"){
         if(manual) return;
         var yes = await askConfirm({title:"开启手动调节？",
-          text:"手动指定 "+disp(name)+" 每小时主动联系你的次数后，有些角色（尤其病娇人设）或许会察觉这种不自然的规律——确定要开启吗？",
+          text:"手动指定 "+disp(name)+" 的短信与来电频率后，有些角色（尤其病娇人设）或许会察觉这种不自然的规律——确定要开启吗？",
           ok:"开启手动调节"});
         if(!yes) return;
-        try { await rpc("set_char_freq",{name:name, level:Math.max(1,Math.min(10,lvl||2))}); } catch(e){}
+        try { await rpc("set_char_freq",{name:name, sms:Math.max(1,Math.min(10,smsLvl||2)), call:Math.max(1,Math.min(10,callLvl||1))}); } catch(e){}
       } else {
         if(!manual) return;
         try { await rpc("clear_char_freq",{name:name}); } catch(e){}
       }
       go("charSettings", name);
     };});
-    var rng = screen.querySelector("#cf-range"), cfnum = screen.querySelector("#cf-num");
-    if(rng){
-      rng.oninput = function(){ if(cfnum) cfnum.textContent = rng.value; };
-      rng.onchange = function(){ lvl = parseInt(rng.value,10)||2; rpc("set_char_freq",{name:name, level:lvl}).catch(function(){}); };   // 拉杆 = 每小时联系次数
-    }
+    var smsRng = screen.querySelector("#cf-sms-range"), smsNum = screen.querySelector("#cf-sms-num");
+    var callRng = screen.querySelector("#cf-call-range"), callNum = screen.querySelector("#cf-call-num");
+    function saveFreq(){ rpc("set_char_freq",{name:name, sms:smsLvl, call:callLvl}).catch(function(){}); }
+    if(smsRng){ smsRng.oninput = function(){ smsLvl = parseInt(smsRng.value,10)||2; if(smsNum) smsNum.textContent = smsLvl; }; smsRng.onchange = saveFreq; }
+    if(callRng){ callRng.oninput = function(){ callLvl = parseInt(callRng.value,10)||1; if(callNum) callNum.textContent = callLvl; }; callRng.onchange = saveFreq; }
   };
 
   // ── Calls ──
   VIEWS.calls = async function(){
     var calls = data.calls || [];
     var phoneGlyph = '<svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg>';
+    function callMeta(c){
+      var missed = c.type==="missed";
+      var kind = missed ? "missed" : c.type==="outgoing" ? "outgoing" : "incoming";
+      var arrow = kind==="outgoing" ? "↗" : "↙";
+      var parts = [c.video?"视频":""];
+      var ts = Number(c.ts || 0) * 1000;
+      if(ts){
+        var d = new Date(ts), now = new Date();
+        var sameDay = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+        var clock = String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+        parts.push(sameDay ? "今天 "+clock : (d.getMonth()+1)+"/"+d.getDate()+" "+clock);
+      }
+      if(!missed && c.duration){
+        var secs = Number(c.duration)||0;
+        parts.push(secs>=60 ? Math.floor(secs/60)+"分"+(secs%60)+"秒" : secs+"秒");
+      }
+      return '<span class="call-arrow '+kind+'">'+arrow+'</span><span>'+esc(parts.filter(Boolean).join(" · "))+'</span>';
+    }
     var rows = calls.map(function(c){
       var missed = c.type==="missed";
-      var label = missed ? "未接来电" : c.type==="outgoing" ? "已拨打" : "已接听";
-      var dur = (!missed && c.duration) ? " · "+c.duration+"秒" : "";
       return '<button class="row" data-name="'+esc(c.name)+'">'+avatar(c.name)+
-        '<span class="grow"><b'+(missed?' class="missed"':'')+'>'+esc(disp(c.name))+'</b>'+
-        '<small'+(missed?' class="missed"':'')+'>'+(c.video?"视频 ":"")+label+dur+'</small></span>'+
-        '<span class="icon-btn call-back'+(missed?" missed":"")+'" data-cb="'+esc(c.name)+'" data-cv="'+(c.video?"1":"")+'">'+(c.video?"📹":phoneGlyph)+'</span></button>';
+        '<span class="grow"><b>'+esc(disp(c.name))+'</b>'+
+        '<small class="call-meta">'+callMeta(c)+'</small></span>'+
+        '<span class="icon-btn call-back" data-cb="'+esc(c.name)+'" data-cv="'+(c.video?"1":"0")+'">'+(c.video?"📹":phoneGlyph)+'</span></button>';
     }).join("");
     screen.innerHTML = '<div class="app-head"><button class="hbtn" data-home>‹</button><b>电话</b>'+
       '<button class="hbtn" data-dial aria-label="拨号">✆</button></div><div class="scroll">'+
@@ -831,6 +855,19 @@
       go("inCall", {name:el.getAttribute("data-cb"), type:(el.getAttribute("data-cv")==="1"?"video":"voice"), dir:"outgoing"});
     }; });
     screen.querySelectorAll("[data-name]").forEach(function(el){ el.onclick = go.bind(null, "thread", el.getAttribute("data-name")); });
+    (function(){
+      var myGen = navGen, seen = JSON.stringify(calls);
+      (async function(){
+        while(navGen===myGen && current.view==="calls"){
+          await new Promise(function(resolve){ setTimeout(resolve, 2500); });
+          if(navGen!==myGen || current.view!=="calls") return;
+          var fresh = null; try { fresh = await rpc("call_log"); } catch(e){}
+          if(navGen!==myGen || current.view!=="calls" || !fresh || !fresh.calls) continue;
+          var next = JSON.stringify(fresh.calls);
+          if(next !== seen){ data.calls = fresh.calls; go("calls", null); return; }
+        }
+      })();
+    })();
   };
 
   // ── Dial: pick a contact, choose voice / video ──
@@ -1242,7 +1279,7 @@
       '<div class="call-name">'+esc(disp(info.name))+'</div>'+
       '<div class="call-sub">'+(info.type==="video"?"视频来电":"语音来电")+'…</div></div>'+
       '<div class="call-actions">'+
-        '<button class="call-btn decline" data-decline><span><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>拒接</button>'+
+        '<button class="call-btn decline" data-decline><span><i class="call-emoji" aria-hidden="true">📞</i></span>拒接</button>'+
         '<button class="call-btn accept" data-accept><span><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>接听</button>'+
       '</div></div>';
     screen.querySelector("[data-accept]").onclick = async function(){
@@ -1255,34 +1292,62 @@
       }
       go("inCall", {name:info.name, type:info.type, dir:"incoming"});
     };
-    screen.querySelector("[data-decline]").onclick = function(){
-      rpc("call_decline", {name:info.name, video:info.type==="video"}).catch(function(){});
+    screen.querySelector("[data-decline]").onclick = async function(){
+      try { await rpc("call_decline", {name:info.name, video:info.type==="video"}); } catch(e){}
+      try { var fresh = await rpc("call_log"); if(fresh && fresh.calls) data.calls = fresh.calls; } catch(e){}
       closePhone();
     };
   };
 
   VIEWS.inCall = async function(info){
     info = info || CALL;
-    if(info.dir==="outgoing"){ rpc("call_dial", {name:info.name, video:info.type==="video"}).catch(function(){}); }
-    var start = Date.now();
+    if(!info.callId){ info.callId = "call-"+Date.now()+"-"+Math.random().toString(36).slice(2,10); }
+    var outgoing = info.dir==="outgoing";
+    var start = 0, iv = null, ringTimer = null, callStarted = !outgoing;
     screen.innerHTML = '<div class="callscreen"><div class="call-top"><div class="call-av">'+avatar(info.name)+'</div>'+
       '<div class="call-name">'+esc(disp(info.name))+'</div>'+
-      '<div class="call-sub" id="call-timer">通话中 00:00</div></div>'+
-      '<div class="call-actions"><button class="call-btn decline" data-hangup><span><svg class="phone-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.2 11.2 0 0 0 3.51.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.58 21 3 13.42 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.2 11.2 0 0 0 .56 3.51 1 1 0 0 1-.24 1.01l-2.2 2.27Z"/></svg></span>挂断</button></div></div>';
+      '<div class="call-sub" id="call-timer">'+(outgoing?'正在呼叫…':'通话中 00:00')+'</div></div>'+
+      '<div class="call-actions"><button class="call-btn decline" data-hangup><span><i class="call-emoji" aria-hidden="true">📞</i></span>'+(outgoing?'取消':'挂断')+'</button></div></div>';
     var timer = screen.querySelector("#call-timer");
-    var iv = setInterval(function(){
-      var s = Math.floor((Date.now()-start)/1000);
-      timer.textContent = "通话中 " + String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
-    }, 1000);
+    function beginCall(){
+      if(current.view!=="inCall" || current.arg!==info) return;
+      callStarted = true;
+      start = Date.now();
+      if(timer) timer.textContent = "通话中 00:00";
+      var hangupBtn = screen.querySelector("[data-hangup]");
+      if(hangupBtn) hangupBtn.lastChild.nodeValue = "挂断";
+      if(outgoing) rpc("call_dial", {name:info.name, video:info.type==="video"}).catch(function(){});
+      iv = setInterval(function(){
+        var s = Math.floor((Date.now()-start)/1000);
+        if(timer) timer.textContent = "通话中 " + String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+      }, 1000);
+    }
+    if(outgoing) ringTimer = setTimeout(beginCall, 5000 + Math.floor(Math.random()*5001));
+    else beginCall();
     var hangupAttempts = 0;
+    var hangingUp = false;
     screen.querySelector("[data-hangup]").onclick = async function(){
+      if(hangingUp) return;
+      if(!callStarted){
+        if(ringTimer) clearTimeout(ringTimer);
+        go(preCallView.view, preCallView.arg);
+        return;
+      }
+      hangingUp = true;
+      var hangupBtn = screen.querySelector("[data-hangup]");
+      if(hangupBtn) hangupBtn.disabled = true;
       hangupAttempts++;
       var r = null;
       try { r = await rpc("call_hangup", {name:info.name, duration:Math.floor((Date.now()-start)/1000),
-        incoming:(info.dir==="incoming"), video:info.type==="video", attempt:hangupAttempts}); } catch(e){}
-      if(r && r.blocked){ yandereResist(r.attempt || hangupAttempts); }   // 病娇挂不断：施压、不挂断
-      else if(r && r.ok) { clearInterval(iv); go(preCallView.view, preCallView.arg); }
+        incoming:(info.dir==="incoming"), video:info.type==="video", attempt:hangupAttempts, callId:info.callId}); } catch(e){}
+      if(r && r.blocked){ hangingUp=false; if(hangupBtn) hangupBtn.disabled=false; yandereResist(r.attempt || hangupAttempts); }   // 病娇挂不断：施压、不挂断
+      else if(r && r.ok) {
+        clearInterval(iv);
+        try { var fresh = await rpc("call_log"); if(fresh && fresh.calls) data.calls = fresh.calls; } catch(e){}
+        go(preCallView.view, preCallView.arg);
+      }
       else if(timer) {
+        hangingUp=false; if(hangupBtn) hangupBtn.disabled=false;
         timer.textContent = "主舞台连接失败，请再试一次";
         timer.style.color = "";
         timer.style.fontWeight = "";

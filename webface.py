@@ -373,7 +373,7 @@ def _call_dial(name: str, video: bool) -> dict[str, Any]:
     return {"ok": True}
 
 
-def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt: int = 0) -> dict[str, Any]:
+def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt: int = 0, call_id: str = "") -> dict[str, Any]:
     """Player hangs up: interrupt current speech, log, then the character reacts.
 
     Yandere 挂不断: if the character is a yandere who has tampered with the phone, the
@@ -382,7 +382,7 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt:
     """
     name = (name or "").strip()
     try:
-        from plugins.shinsekai_chat_phone.settings_app import is_yandere_tampering_active
+        from plugins.shinsekai_chat_phone.phone_settings import is_yandere_tampering_active
         blocked = bool(name) and is_yandere_tampering_active(name) and int(attempt or 0) < 8
     except Exception:
         blocked = False
@@ -397,6 +397,14 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt:
         threading.Thread(target=_resist, daemon=True, name="phone-yandere-resist").start()
         return {"ok": False, "blocked": True, "attempt": int(attempt or 0)}
 
+    logged = False
+    if name:
+        try:
+            from plugins.shinsekai_chat_phone import phone_core
+            ctype = ("incoming" if incoming else "outgoing") + ("_video" if video else "")
+            logged = phone_core.log_call(name, max(int(duration or 0), 1), ctype, call_id)
+        except Exception:
+            logger.debug("call log failed", exc_info=True)
     _send_runtime_command({"type": "skip-speech"})  # 打断: cut the character's current speech now
     reaction_queued = True
     if name:
@@ -408,13 +416,7 @@ def _call_hangup(name: str, duration: int, incoming: bool, video: bool, attempt:
             hidden=True,
         )
     if not reaction_queued:
-        return {"ok": False, "error": "runtime_unavailable"}
-    try:
-        from plugins.shinsekai_chat_phone import phone_core
-        ctype = ("incoming" if incoming else "outgoing") + ("_video" if video else "")
-        phone_core.log_call(name, max(int(duration or 0), 1), ctype)
-    except Exception:
-        logger.debug("call log failed", exc_info=True)
+        return {"ok": True, "logged": logged, "warning": "runtime_unavailable"}
     return {"ok": True}
 
 
@@ -533,9 +535,15 @@ _RESERVED = {"COT", "NARR", "CALL", "CHOICE", "STAT", "PHONE", "CG", "bgm", "旁
 def _call_log() -> list[dict[str, Any]]:
     """Voice + video call history merged, newest first (video flagged)."""
     out: list[dict[str, Any]] = []
+    try:
+        from plugins.shinsekai_chat_phone import phone_core
+        session = phone_core.session_dir(write_marker=False)
+    except Exception:
+        session = None
+    if session is None:
+        return out
     for fn, is_video in (("call_log.json", False), ("video_call_log.json", True)):
-        d = _richest(fn)
-        raw = _read_json((d / fn) if d else None, [])
+        raw = _read_json(session / fn, [])
         for c in raw if isinstance(raw, list) else []:
             name = str(c.get("name", "")).strip()
             if not name or name in _RESERVED:
@@ -1015,7 +1023,7 @@ def _rec_audio(mid) -> dict:
     return {"data": ""}
 
 
-# ── Music media control (Qt-free, mirrors the legacy music_app) ──────
+# ── Music media control ──
 
 def _music_media_key(vk: int) -> bool:
     """Send a Windows media key (play/pause / prev / next) to the system media session."""
@@ -1191,12 +1199,16 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             n = str(args.get("name", ""))
             return {
                 "level": phone_core.get_char_freq(n),
+                "sms": phone_core.get_char_freq(n),
+                "call": phone_core.get_char_call_freq(n),
                 "manual": phone_core.is_manual_freq(n),
                 "affinity": phone_core.get_affinity(n),
             }
         if cmd == "set_char_freq":
             from plugins.shinsekai_chat_phone import phone_core
-            return {"ok": bool(phone_core.set_char_freq(str(args.get("name", "")), int(args.get("level", 2) or 2)))}
+            sms = int(args.get("sms", args.get("level", 2)) or 2)
+            call = int(args.get("call", 1) or 1)
+            return {"ok": bool(phone_core.set_char_freq(str(args.get("name", "")), sms, call))}
         if cmd == "clear_char_freq":
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.clear_char_freq(str(args.get("name", ""))))}
@@ -1256,7 +1268,7 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
         if cmd == "call_dial":
             return _call_dial(str(args.get("name", "")), bool(args.get("video")))
         if cmd == "call_hangup":
-            return _call_hangup(str(args.get("name", "")), args.get("duration", 0), bool(args.get("incoming")), bool(args.get("video")), int(args.get("attempt", 0) or 0))
+            return _call_hangup(str(args.get("name", "")), args.get("duration", 0), bool(args.get("incoming")), bool(args.get("video")), int(args.get("attempt", 0) or 0), str(args.get("callId", "")))
         if cmd == "call_decline":
             return _call_decline(str(args.get("name", "")), bool(args.get("video")))
         return {"ok": False, "error": f"unknown cmd: {cmd}"}

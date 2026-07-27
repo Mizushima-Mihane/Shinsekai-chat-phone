@@ -1,15 +1,14 @@
 """Qt-free phone core: session resolution + store writes usable in ANY process.
 
-The legacy phone kept live state in a Qt widget (``_phone_widget``). In the React
-desktop app there is no widget, so the LLM tools (runtime process) and the web
-phone (bridge process) both go through this module instead.
+The LLM tools (runtime process) and the web phone (bridge process) both go
+through this module.
 
 Session binding: the runtime process knows the active chat session from its
 ``--history`` argument and stamps an ``_active_session`` marker; the bridge (no
 ``--history``) reads that marker. Both then read/write the same session dir, so an
 SMS the character sends via a tool shows up in the player's phone immediately.
 
-Persistence format matches the legacy phone:
+Persistence format:
     <session>/messages.json  {name: [{text, is_user, idx, read}]}
     <session>/contacts.json  {contacts: {name: {added_at, known}}}
 """
@@ -236,21 +235,32 @@ def get_typing() -> dict:
 
 def deliver_sms_paced(name: str, text: str, known: bool = True) -> bool:
     """Deliver a character SMS with human-like typing pacing (mirrors the legacy phone): the
-    first line waits 1-3s (character reads → types), each subsequent line to the SAME character
-    is +2-4s after the previous one. A 「正在输入」flag is written so the phone can show a typing
+    first line waits 5-10s (character reads → types), each subsequent line to the SAME character
+    is +5-10s after the previous one. A 「正在输入」flag is written so the phone can show a typing
     indicator until the line lands. Immediate write on any error."""
     name = (name or "").strip()
     text = (text or "").strip()
     if _is_junk_name(name) or not text:
         return False
     import random
+    size = len(text)
+    if size <= 12:
+        delay = random.uniform(2.0, 4.0)
+    elif size <= 35:
+        delay = random.uniform(4.0, 6.0)
+    elif size <= 70:
+        delay = random.uniform(6.0, 10.0)
+    elif size <= 120:
+        delay = random.uniform(9.0, 14.0)
+    else:
+        delay = random.uniform(12.0, 18.0)
     now = time.time()
     with _sms_pace_lock:
         prev = _sms_pace_next.get(name, 0.0)
         if prev <= now:
-            base = now + random.uniform(1.0, 3.0)   # first line: read → type
+            base = now + delay   # first line: read → type
         else:
-            base = prev + random.uniform(2.0, 4.0)  # queue after the previous line
+            base = prev + delay  # queue after the previous line
         _sms_pace_next[name] = base
     _set_typing(name, base)
     delay = base - now
@@ -663,11 +673,6 @@ def add_browser_history(query: str) -> bool:
     return True
 
 
-def get_browser_history() -> list[str]:
-    """Visible (not player-deleted) search queries, newest first."""
-    return [d["q"] for d in _load_browser_history() if not d["del"]]
-
-
 def remove_browser_history(query: str) -> bool:
     """Player deletes a search from their own view — but it's only hidden (del=True);
     monitoring (yandere) characters can still dig it up. Never truly erased here."""
@@ -718,7 +723,7 @@ def get_browser_results() -> list:
 # ── Music — launch the player's own local media app (Qt-free) ──────────
 
 def get_music_path() -> str:
-    """Configured local music-player exe path (byte-compatible with music_app)."""
+    """Configured local music-player executable path."""
     cfg = Path("data/plugins/com.shinsekai.chat_phone/music_config.json")
     try:
         if cfg.is_file():
@@ -782,7 +787,7 @@ def last_message(name: str):
     return arr[-1] if arr else None
 
 
-def log_call(name: str, duration: int, call_type: str = "outgoing") -> bool:
+def log_call(name: str, duration: int, call_type: str = "outgoing", call_id: str = "") -> bool:
     """Append a call-log entry (byte-compatible with phone_app.log_call).
 
     call_log.json = [{name, duration, timestamp, type}], newest-first. ``type`` carries
@@ -797,8 +802,14 @@ def log_call(name: str, duration: int, call_type: str = "outgoing") -> bool:
         data = _read_json(path, [])
         if not isinstance(data, list):
             data = []
-        data.insert(0, {"name": name, "duration": int(duration or 0),
-                        "timestamp": time.time(), "type": call_type})
+        call_id = (call_id or "").strip()
+        if call_id and any(isinstance(item, dict) and item.get("call_id") == call_id for item in data):
+            return True
+        entry = {"name": name, "duration": int(duration or 0),
+                 "timestamp": time.time(), "type": call_type}
+        if call_id:
+            entry["call_id"] = call_id
+        data.insert(0, entry)
         _write_json(path, data[:200])
     return True
 
@@ -850,21 +861,6 @@ def is_stranger_contact(name: str) -> bool:
     return False
 
 
-def contact_added_at(name: str) -> float:
-    """When this contact was added (epoch seconds), for familiarity ramp; 0 if unknown."""
-    name = (name or "").strip()
-    data = _read_json(session_dir() / "contacts.json", {}) or {}
-    contacts = data.get("contacts") if isinstance(data, dict) else None
-    if isinstance(contacts, dict):
-        info = contacts.get(name)
-        if isinstance(info, dict):
-            try:
-                return float(info.get("added_at", 0) or 0)
-            except (TypeError, ValueError):
-                return 0.0
-    return 0.0
-
-
 # ── Per-character proactive-contact level, stored PER SAVE (follows the session) ──
 
 def _char_freq_path() -> Path:
@@ -877,26 +873,43 @@ def get_char_freq_all() -> dict:
 
 
 def get_char_freq(name: str) -> int:
-    """This character's proactive level (0=off,1=low,2=normal,3=high); default 2."""
+    """Manual SMS frequency per hour. Legacy numeric saves remain supported."""
     name = (name or "").strip()
     v = get_char_freq_all().get(name)
     try:
+        if isinstance(v, dict):
+            return int(v.get("sms", 2))
         return int(v) if v is not None else 2
     except (TypeError, ValueError):
         return 2
 
 
-def set_char_freq(name: str, level: int) -> bool:
-    """Turn ON manual mode for a character with an explicit level (0=off..3=high)."""
+def get_char_call_freq(name: str) -> int:
+    """Manual incoming-call frequency per hour. Old one-slider saves default to 1."""
+    name = (name or "").strip()
+    v = get_char_freq_all().get(name)
+    try:
+        return int(v.get("call", 1)) if isinstance(v, dict) else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def set_char_freq(name: str, sms: int, call: int | None = None) -> bool:
+    """Turn on manual proactive contact with independent SMS and call rates."""
     name = (name or "").strip()
     if not name:
         return False
     with _lock:
         data = get_char_freq_all()
         try:
-            data[name] = int(level)
+            sms_level = max(1, min(10, int(sms)))
         except (TypeError, ValueError):
-            data[name] = 2
+            sms_level = 2
+        try:
+            call_level = max(1, min(10, int(call if call is not None else 1)))
+        except (TypeError, ValueError):
+            call_level = 1
+        data[name] = {"sms": sms_level, "call": call_level}
         _write_json(_char_freq_path(), data)
     return True
 

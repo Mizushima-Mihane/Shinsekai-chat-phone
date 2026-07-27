@@ -110,9 +110,11 @@ class ProactiveCore:
     def __init__(self, on_incoming_call=None) -> None:
         self._char_settings: dict[str, str] = {}
         self._freq_config: dict = {}
-        self._scene_chars: dict[str, float] = {}
+        self._scene_chars: dict[str, tuple[str, float]] = {}
         self._urge: dict[str, float] = {}
-        self._last_reach: dict[str, float] = {}  # last proactive SMS/call time per char (anti-spam cooldown)
+        self._last_reach: dict[str, float] = {}  # automatic-mode anti-spam cooldown
+        self._last_manual_sms: dict[str, float] = {}
+        self._last_manual_call: dict[str, float] = {}
         self._interval = 60.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -127,17 +129,21 @@ class ProactiveCore:
         self._freq_config = dict(config or {})
         self._urge = {}
         self._last_reach = {}
+        self._last_manual_sms = {}
+        self._last_manual_call = {}
 
     # ── scene state (fed by the message-added hook) ───────────────────
-    def set_scene_character(self, name: str) -> None:
+    def set_scene_character(self, name: str, mode: str = "together") -> None:
+        """Record an explicit shared scene: together blocks all contact, quiet blocks calls."""
         name = (name or "").strip()
         if not name:
             return
+        mode = "quiet" if mode == "quiet" else "together"
         now = time.time()
         with self._lock:
-            self._scene_chars[name] = now
-            self._scene_chars = {n: ts for n, ts in self._scene_chars.items()
-                                 if now - ts < self._SCENE_BACKSTOP_SEC}
+            self._scene_chars[name] = (mode, now)
+            self._scene_chars = {n: item for n, item in self._scene_chars.items()
+                                 if now - item[1] < self._SCENE_BACKSTOP_SEC}
 
     def clear_scene(self) -> None:
         with self._lock:
@@ -255,20 +261,20 @@ class ProactiveCore:
             valid = set(contacts)
         now = time.time()
         with self._lock:
-            scene = {n for n, ts in self._scene_chars.items()
+            scene = {n: mode for n, (mode, ts) in self._scene_chars.items()
                      if now - ts < self._SCENE_BACKSTOP_SEC}
         for name in contacts:
             if name not in valid:
                 continue
-            # 手动模式：玩家在角色设置里用拉杆指定了「每小时联系次数」(1-10)；
+            # 手动模式：短信和来电分别按玩家指定的每小时频率运行；
             # 自主模式：跟随好感度自然升温
             manual = phone_core.is_manual_freq(name)
             if manual:
-                per_hour = phone_core.get_char_freq(name)
-                if per_hour <= 0:
+                sms_per_hour = max(1, min(10, int(phone_core.get_char_freq(name))))
+                call_per_hour = max(1, min(10, int(phone_core.get_char_call_freq(name))))
+                if sms_per_hour <= 0 and call_per_hour <= 0:
                     continue  # 玩家手动关闭了该角色的主动联系
-                per_hour = max(1, min(10, int(per_hour)))
-                char_scale = per_hour / 5.0  # for moments / call scaling (≈1.0 at 5/hr)
+                char_scale = sms_per_hour / 5.0
             else:
                 # 自主：好感度即熟悉/亲密度，默认偏低(20)、随剧情升温，
                 # 天然实现"人与人交往不是一蹴而就、刚认识不该发很多消息"
@@ -276,32 +282,39 @@ class ProactiveCore:
                 if aff <= 0:
                     continue  # 好感度见底，该角色不再主动搭理玩家
                 char_scale = aff / 50.0  # 20→0.4, 50→1.0, 100→2.0
-                per_hour = 0
+                sms_per_hour = call_per_hour = 0
             # Moments: independent low-freq roll, unaffected by scene / no-double-text.
             if self._maybe_post_moment(name):
                 continue
             if dnd:
                 continue  # 勿扰: suppress proactive SMS + calls (ambient moments still allowed)
-            if name in scene:
-                continue  # face-to-face — say it in person, don't text / call
+            scene_mode = scene.get(name)
+            if scene_mode == "together":
+                continue  # private face-to-face time — say it in person
+            calls_blocked = scene_mode == "quiet"
             try:
-                from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
+                from plugins.shinsekai_chat_phone.phone_settings import is_character_yandere
                 yandere = is_character_yandere(name)
             except Exception:
                 yandere = False
-            # Absolute anti-spam cooldown. Manual mode honours the exact per-hour rate the
-            # player set (3600/N); auto mode scales an anti-machine-gun floor by affinity /
-            # yandere. Either way, one reach-out then quiet for the cooldown window.
+            # 手动模式的短信和来电分别计时；自主模式仍共用反刷屏冷却。
             if manual:
-                _reach_cd = 3600.0 / per_hour
+                sms_due = now - self._last_manual_sms.get(name, 0.0) >= 3600.0 / sms_per_hour
+                call_due = now - self._last_manual_call.get(name, 0.0) >= 3600.0 / call_per_hour
+                if not sms_due and not call_due:
+                    continue
+                if call_due and not calls_blocked and (not sms_due or random.random() < 0.5):
+                    if self._emit_call(name, random.random() < 0.3):
+                        self._last_manual_call[name] = now
+                    continue
             else:
                 _reach_cd = (1200.0 if yandere else 2400.0) / max(0.6, min(1.6, char_scale))
-            if now - self._last_reach.get(name, 0.0) < _reach_cd:
-                continue  # reached out recently — hold off this tick
-            # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
-            if self._maybe_call(name, scale * char_scale):
-                self._last_reach[name] = now
-                continue  # rang the player — don't also text this tick
+                if now - self._last_reach.get(name, 0.0) < _reach_cd:
+                    continue  # reached out recently — hold off this tick
+                # Proactive incoming call: rare random ring (rarer than SMS), scaled by level.
+                if not calls_blocked and self._maybe_call(name, scale * char_scale):
+                    self._last_reach[name] = now
+                    continue  # rang the player — don't also text this tick
             # Don't double-text: a character who already reached out and hasn't been answered
             # stays quiet (avoids "在吗?在吗?"). Yandere / 玩家手动设的高频 may follow up, but
             # all cap out at 3 unanswered in a row.
@@ -321,6 +334,7 @@ class ProactiveCore:
             if manual:
                 self._urge[name] = 0.0
                 self._send_proactive_burst(name, now)
+                self._last_manual_sms[name] = now
                 continue
             fc = fc_all.get(name, {}) or {}
             sms_base = fc.get("sms", 0.1) * scale * char_scale
@@ -387,7 +401,7 @@ class ProactiveCore:
         from plugins.shinsekai_chat_phone import phone_core
         mo_base = (self._freq_config.get(name, {}) or {}).get("moments", 0.02)
         try:
-            from plugins.shinsekai_chat_phone.settings_app import is_character_yandere
+            from plugins.shinsekai_chat_phone.phone_settings import is_character_yandere
             if is_character_yandere(name):
                 mo_base = min(mo_base * 1.6, 0.4)
         except Exception:

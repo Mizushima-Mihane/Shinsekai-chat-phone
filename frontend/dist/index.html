@@ -699,7 +699,10 @@
         if(!d) return;
         var t = "[图片] "+d;
         msgs.push({text:t, isUser:true}); draw();
-        try { await rpc("send_sms",{name:name, text:t}); } catch(e){}
+        try {
+          var sent = await rpc("send_sms",{name:name, text:t, imageDesc:d});
+          if(!sent || !sent.ok) alert("图片发送失败，请稍后重试。");
+        } catch(e){ alert("图片发送失败，请稍后重试。"); }
         pollReply();
       }
     };});
@@ -1159,8 +1162,9 @@
       '<small style="display:block;font-size:11px;color:var(--muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(memline)+'</small></b>'+
       '<button class="hbtn" data-edit aria-label="编辑群">⋯</button></div>'+
       '<div class="scroll msgs" id="gmsgs"></div>'+
-      '<form class="composer" id="gcf"><div class="field"><input id="gci" placeholder="在群里说点什么" autocomplete="off"></div>'+
-      '<button class="send" type="submit">➤</button></form>';
+      '<form class="composer" id="gcf"><button class="cplus" type="button" data-gplus aria-label="更多">＋</button><div class="field"><input id="gci" placeholder="在群里说点什么" autocomplete="off"></div>'+
+      '<button class="send" type="submit">➤</button></form>'+
+      '<div class="plus-sheet" id="gplusSheet"><button class="plus-item" data-gact="image"><span class="pi-ic">🖼</span>发送图片</button></div>';
     screen.querySelector("[data-back]").onclick = go.bind(null, "groups", null);
     screen.querySelector("[data-edit]").onclick = go.bind(null, "groupEdit", name);
     (function(){  // clear the group's unread badge on open (local + persisted)
@@ -1169,11 +1173,18 @@
     })();
     var box = screen.querySelector("#gmsgs");
     var msgs = g.messages || [];
+    function groupBubble(m, sender){
+      var t = m.text || "";
+      var prefix = sender ? '<small class="gname">'+esc(sender)+'</small>' : '';
+      if(t.indexOf("[图片]")===0){ var d = t.slice(4).trim();
+        return '<div class="bubble imgb">'+prefix+'<div class="imgph">🖼</div>'+(d?'<small>'+esc(d)+'</small>':'')+'</div>'; }
+      return '<div class="bubble">'+prefix+'<p>'+esc(t)+'</p></div>';
+    }
     function draw(){
       box.innerHTML = msgs.length ? msgs.map(function(m){
         if(m.isSystem) return '<div class="gsys">'+esc(m.text)+'</div>';
-        if(m.isUser) return '<div class="msg out">'+avatar("我",true)+'<div class="bubble"><p>'+esc(m.text)+'</p></div></div>';
-        return '<div class="msg in">'+avatar(m.who,true)+'<div class="bubble"><small class="gname">'+esc(m.who)+'</small><p>'+esc(m.text)+'</p></div></div>';
+        if(m.isUser) return '<div class="msg out">'+avatar("我",true)+groupBubble(m)+ '</div>';
+        return '<div class="msg in">'+avatar(m.who,true)+groupBubble(m, m.who)+'</div>';
       }).join("") : '<div class="empty">群里还没有人说话。</div>';
       box.scrollTop = box.scrollHeight;
     }
@@ -1201,6 +1212,22 @@
       if(!text) return; input.value="";
       msgs.push({who:"我", text:text, isUser:true, isSystem:false}); draw();
       try { await rpc("send_group",{name:name, text:text}); } catch(e){}
+      pollReply();
+    };
+    var gplusBtn = screen.querySelector("[data-gplus]"), gsheet = screen.querySelector("#gplusSheet");
+    function closeGroupSheet(){ gsheet.classList.remove("on"); gplusBtn.classList.remove("on"); }
+    gplusBtn.onclick = function(){ var on = gsheet.classList.toggle("on"); gplusBtn.classList.toggle("on", on); };
+    screen.querySelector("#gci").addEventListener("focus", closeGroupSheet);
+    gsheet.querySelector("[data-gact='image']").onclick = async function(){
+      closeGroupSheet();
+      var d = await askText({title:"发送图片", placeholder:"描述这张图片（如：海边的晚霞）", max:120});
+      if(!d) return;
+      var t = "[图片] "+d;
+      msgs.push({who:"我", text:t, isUser:true, isSystem:false}); draw();
+      try {
+        var sent = await rpc("send_group",{name:name, text:t, imageDesc:d});
+        if(!sent || !sent.ok) alert("图片发送失败，请稍后重试。");
+      } catch(e){ alert("图片发送失败，请稍后重试。"); }
       pollReply();
     };
   };

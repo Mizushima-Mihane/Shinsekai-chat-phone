@@ -285,11 +285,22 @@ def _resolve_bridge_state():
     import sys
     for key in ("frontend_bridge", "webui_react", "__main__"):
         mod = sys.modules.get(key)
-        getter = getattr(mod, "get_bridge_state", None) if mod is not None else None
-        if getter is None:
+        if mod is None:
             continue
+        getter = getattr(mod, "get_bridge_state", None)
         try:
-            st = getter()
+            if getter is not None:
+                st = getter()
+            else:
+                # Current hosts keep the live state private.  Read that state
+                # under its own lock as a compatibility fallback, so the phone
+                # can still inject SMS/group turns without a host API change.
+                lock = getattr(mod, "_bridge_state_lock", None)
+                if lock is not None:
+                    with lock:
+                        st = getattr(mod, "_bridge_state", None)
+                else:
+                    st = getattr(mod, "_bridge_state", None)
         except Exception:
             st = None
         if st is not None:
@@ -303,16 +314,21 @@ def _send_runtime_command(command: dict) -> bool:
     try:
         state = _resolve_bridge_state()
         if state is None:
+            logger.warning("phone runtime command skipped: bridge state unavailable")
             return False
         cs = getattr(state, "chat_stream", None)
         sess = getattr(state, "chat_session", None) or {}
         sid = str((sess.get("sessionId") if isinstance(sess, dict) else "") or "").strip()
         if cs is None or not sid:
+            logger.warning("phone runtime command skipped: no active chat stream/session")
             return False
         import uuid
         command = dict(command)
         command.setdefault("cmdId", uuid.uuid4().hex)
-        return bool(cs.send_command(sid, command))
+        sent = bool(cs.send_command(sid, command))
+        if not sent:
+            logger.warning("phone runtime command rejected by active chat session")
+        return sent
     except Exception:
         logger.debug("phone runtime command failed", exc_info=True)
         return False
@@ -437,7 +453,7 @@ def _call_decline(name: str, video: bool) -> dict[str, Any]:
     return {"ok": True}
 
 
-def _send_sms(name: str, text: str) -> dict[str, Any]:
+def _send_sms(name: str, text: str, image_desc: str = "") -> dict[str, Any]:
     """Append the player's SMS, then trigger the character's LLM reply (route C inc.2).
 
     The optimistic append shows the bubble instantly; the reply arrives async
@@ -448,6 +464,7 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
     """
     name = (name or "").strip()
     text = (text or "").strip()
+    image_desc = (image_desc or "").strip()
     if not name or not text:
         return {"ok": False, "error": "empty"}
     try:
@@ -460,6 +477,14 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
     # instantly even when no runtime is connected (send_command waits up to ~2s).
     try:
         import threading
+        image_note = (
+            f'\n玩家这条短信附带了一张图片，图片内容描述为：「{image_desc}」。'
+            '这是本轮不可改写的事实：只能基于这条描述谈论照片，不得把照片中的人物替换成其他角色，'
+            '也不得补写描述中不存在的人物或关系；不确定时只说“照片里的人”。'
+            '若连续发送多条短信，所有短信都必须保持这张照片的人物关系一致。'
+            '请把它当作图片来理解，并针对图片内容自然回应；回复仍必须走 send_sms 工具。'
+            if image_desc else ""
+        )
         stranger = False
         try:
             if phone_core.is_stranger_contact(name):
@@ -472,7 +497,7 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
             runtime_text = (f'[短信] {name}收到了一条陌生短信："{text}"。'
                             f'发信人不在{name}的通讯录里，{name}也想不起何时把号码给过对方，你们或许素未谋面——'
                             f'请让{name}结合人设自然反应（困惑、警惕或好奇皆可），不要假装早就认识对方。'
-                            f'请调用 send_sms 工具回复，不要输出对话。')
+                            f'请调用 send_sms 工具回复，不要输出对话。{image_note}')
         else:
             convo_lines = []
             try:
@@ -488,7 +513,7 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
             runtime_text = (f'[短信] 玩家给{name}发了新短信。你们最近的短信往来如下'
                             f'（按时间先后，最后一条是玩家刚发的）：\n{convo}\n'
                             f'请{name}结合以上短信上下文连贯地回复——延续话题、记得前面聊过的内容，别答非所问。'
-                            f'调用 send_sms 工具回复，不要输出对话。')
+                            f'调用 send_sms 工具回复，不要输出对话。{image_note}')
         threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
                          daemon=True, name="phone-sms-trigger").start()
     except Exception:
@@ -496,7 +521,7 @@ def _send_sms(name: str, text: str) -> dict[str, Any]:
     return {"ok": bool(ok), "ts": time.time()}
 
 
-def _send_group(name: str, text: str) -> dict[str, Any]:
+def _send_group(name: str, text: str, image_desc: str = "") -> dict[str, Any]:
     """Append the player's group message, then trigger character replies (route C).
 
     Mirrors _send_sms but formats the runtime turn as [群聊] (the injected group
@@ -504,6 +529,7 @@ def _send_group(name: str, text: str) -> dict[str, Any]:
     """
     name = (name or "").strip()
     text = (text or "").strip()
+    image_desc = (image_desc or "").strip()
     if not name or not text:
         return {"ok": False, "error": "empty"}
     members: list[str] = []
@@ -517,7 +543,16 @@ def _send_group(name: str, text: str) -> dict[str, Any]:
     try:
         import threading
         mstr = "、".join(members)
+        image_note = (
+            f'玩家这条群消息附带了一张图片，图片内容描述为：「{image_desc}」。'
+            '这是本轮不可改写的事实：只能基于这条描述谈论照片，不得把照片中的人物替换成其他角色，'
+            '也不得补写描述中不存在的人物或关系；不确定时只说“照片里的人”。'
+            '若连续发送多条群消息，所有消息都必须保持这张照片的人物关系一致。'
+            '请让相关群成员结合图片内容自然回应；无需每个人都回复。'
+            if image_desc else ""
+        )
         runtime_text = (f'[群聊] 群「{name}」（成员：{mstr}）里，玩家发了一条消息："{text}"。'
+                        f'{image_note}'
                         f'请由群里相关角色用 send_group_sms 工具回复（可多个角色、多条，'
                         f'角色之间也可以互相接话；不相关的角色可以不回）。不要输出对话。')
         threading.Thread(target=_trigger_runtime_turn, args=(runtime_text,),
@@ -1213,7 +1248,7 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.clear_char_freq(str(args.get("name", ""))))}
         if cmd == "send_sms":
-            return _send_sms(str(args.get("name", "")), str(args.get("text", "")))
+            return _send_sms(str(args.get("name", "")), str(args.get("text", "")), str(args.get("imageDesc", "")))
         if cmd == "add_contact":
             from plugins.shinsekai_chat_phone import phone_core
             _cn = str(args.get("name", "")).strip()
@@ -1222,7 +1257,7 @@ def rpc(values: Mapping[str, Any]) -> dict[str, Any]:
             ok = phone_core.add_manual_contact(_cn, stranger=bool(args.get("stranger", True)))
             return {"ok": bool(ok), "name": _cn}
         if cmd == "send_group":
-            return _send_group(str(args.get("name", "")), str(args.get("text", "")))
+            return _send_group(str(args.get("name", "")), str(args.get("text", "")), str(args.get("imageDesc", "")))
         if cmd == "mark_group_read":
             from plugins.shinsekai_chat_phone import phone_core
             return {"ok": bool(phone_core.mark_group_read(str(args.get("name", ""))))}

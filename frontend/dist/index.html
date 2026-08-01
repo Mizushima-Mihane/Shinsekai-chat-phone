@@ -893,6 +893,7 @@
 
   // ── Browser ──
   VIEWS.browser = async function(){
+    var browserError = "";
     function resultsHTML(sets){
       var latest = (sets && sets.length) ? sets[0] : null;
       if(!latest) return '<div class="empty">输入关键词开始搜索。<br><small>搜索结果由这个世界的“搜索引擎”即时生成。</small></div>';
@@ -916,6 +917,7 @@
         '<div class="br-bar"><input id="br-in" placeholder="搜索点什么…" autocomplete="off" maxlength="60">'+
         '<button class="add-go" data-go type="button">搜索</button></div>'+
         '<div class="scroll">'+(searching?'<div class="br-loading">正在搜索…</div>':'')+
+        (browserError?'<div class="br-loading">'+esc(browserError)+'</div>':'')+
         historyHTML()+
         resultsHTML(data.browserResults)+'<div style="height:12px"></div></div>';
       wireBack();
@@ -936,10 +938,17 @@
     }
     async function doSearch(q){
       data.browser = [q].concat((data.browser||[]).filter(function(x){ return x!==q; })).slice(0,100);
+      browserError = "";
       render(true);
       var before = JSON.stringify(data.browserResults||[]);
       var myGen = navGen;
-      try { await rpc("browser_search",{query:q}); } catch(e){}
+      var started = null;
+      try { started = await rpc("browser_search",{query:q}); } catch(e){}
+      if(!started || !started.ok){
+        browserError = "主舞台连接失败，请稍后重试";
+        render(false);
+        return;
+      }
       for(var i=0;i<10;i++){
         await new Promise(function(r){ setTimeout(r,2500); });
         if(navGen!==myGen || current.view!=="browser") return;
@@ -1343,7 +1352,15 @@
       if(timer) timer.textContent = "通话中 00:00";
       var hangupBtn = screen.querySelector("[data-hangup]");
       if(hangupBtn) hangupBtn.lastChild.nodeValue = "挂断";
-      if(outgoing) rpc("call_dial", {name:info.name, video:info.type==="video"}).catch(function(){});
+      function dialFailed(){
+        callStarted = false;
+        clearInterval(iv);
+        if(timer) timer.textContent = "主舞台连接失败，请再试一次";
+        if(hangupBtn) hangupBtn.lastChild.nodeValue = "返回";
+      }
+      if(outgoing) rpc("call_dial", {name:info.name, video:info.type==="video"}).then(function(r){
+        if(!r || !r.ok) dialFailed();
+      }).catch(dialFailed);
       iv = setInterval(function(){
         var s = Math.floor((Date.now()-start)/1000);
         if(timer) timer.textContent = "通话中 " + String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");

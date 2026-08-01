@@ -67,7 +67,10 @@ def get_player_name() -> str:
 
 
 def get_player_signature() -> str:
-    return str(load_settings().get("player_signature", "") or "").strip()
+    settings = load_settings()
+    return str(
+        settings.get("player_signature", settings.get("signature", "")) or ""
+    ).strip()
 
 
 def is_dnd() -> bool:
